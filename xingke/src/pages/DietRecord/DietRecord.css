@@ -1,0 +1,407 @@
+.diet-record {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.diet-record__overview {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 24px;
+}
+
+.diet-overview__ring {
+  position: relative;
+  width: 100px;
+  height: 100px;
+}
+
+.diet-overview__center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+}
+
+.diet-overview__percent {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--mint-500);
+}
+
+.diet-overview__label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.diet-overview__stats {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.diet-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diet-stat-item__label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.diet-stat-item__value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.diet-stat-item__value--accent {
+  color: var(--mint-500);
+}
+
+.diet-stat-item__sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.diet-overview__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ─── 记录列表区块 ─── */
+.diet-record__list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.diet-record__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.diet-record__section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-1, #e4eae8);
+}
+
+.diet-record__section-total {
+  margin-left: 4px;
+  padding: 2px 10px;
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: rgba(94, 234, 212, 0.12);
+  color: var(--mint-400, #5eead4);
+}
+
+/* ─── 日期切换控件(右上角) ─── */
+.diet-date-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diet-date-nav__btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1, #e4eae8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.diet-date-nav__btn:hover:not(:disabled) {
+  background: rgba(94, 234, 212, 0.14);
+  border-color: var(--mint-400, #5eead4);
+  color: var(--mint-400, #5eead4);
+}
+
+.diet-date-nav__btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ─── 记录卡片列表 ─── */
+.diet-records {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.diet-record-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+}
+
+.diet-record-item--excluded {
+  opacity: 0.6;
+}
+
+.diet-record-item__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diet-record-item__name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.diet-record-item__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1, #e4eae8);
+}
+
+.diet-record-item__source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.diet-record-item__source--order {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fbbf24;
+}
+
+.diet-record-item__source--fridge {
+  background: rgba(94, 234, 212, 0.14);
+  color: var(--mint-400, #5eead4);
+}
+
+.diet-record-item__source--chat {
+  background: rgba(167, 139, 250, 0.14);
+  color: #a78bfa;
+}
+
+.diet-record-item__meal {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2, #a8b3b0);
+}
+
+.diet-record-item__detail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-2, #a8b3b0);
+}
+
+.diet-record-item__ingredients {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 480px;
+}
+
+.diet-record-item__excluded-tag {
+  font-size: 11px;
+  color: #f87171;
+}
+
+.diet-record-item__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.diet-record-item__cal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--mint-400, #5eead4);
+}
+
+.diet-record-item__time {
+  font-size: 12px;
+  color: var(--text-3, #7a8a86);
+}
+
+.diet-record__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px;
+  color: var(--mint-500);
+  font-size: 14px;
+}
+
+.diet-record__empty {
+  padding: 32px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-2, #a8b3b0);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diet-record__empty-hint {
+  font-size: 12px;
+  color: var(--text-3, #7a8a86);
+}
+
+/* ─── 预算编辑按钮 ─── */
+.budget-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--mint-400, #5eead4);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.2s, color 0.2s;
+}
+
+.budget-edit-btn:hover {
+  background: var(--mint-400, #5eead4);
+  color: #0d1f1c;
+}
+
+.budget-source-tag {
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-style: normal;
+  border-radius: 4px;
+  background: rgba(94, 234, 212, 0.16);
+  color: var(--mint-400, #5eead4);
+}
+
+/* ─── 小尺寸弹窗 ─── */
+.modal--small {
+  max-width: 420px !important;
+  width: 90%;
+}
+
+/* ─── 预算编辑弹窗 ─── */
+.budget-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.budget-modal__hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-2, #a8b3b0);
+}
+
+.budget-modal__suggested {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  border-radius: 8px;
+  background: rgba(94, 234, 212, 0.1);
+  color: var(--text-1, #e4eae8);
+}
+
+.budget-modal__suggested strong {
+  color: var(--mint-400, #5eead4);
+}
+
+.budget-modal__quick {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.budget-modal__quick-btn {
+  flex: 1;
+  min-width: 72px;
+  padding: 10px 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1, #e4eae8);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.budget-modal__quick-btn:hover {
+  background: rgba(94, 234, 212, 0.14);
+  border-color: var(--mint-400, #5eead4);
+  color: var(--mint-400, #5eead4);
+}
+
+.budget-modal__input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(13, 31, 28, 0.6);
+  color: var(--text-1, #e4eae8);
+  font-size: 16px;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.budget-modal__input:focus {
+  border-color: var(--mint-400, #5eead4);
+}
+
+.budget-modal__submit {
+  width: 100%;
+  padding: 12px;
+  font-size: 14px;
+  justify-content: center;
+  gap: 8px;
+}

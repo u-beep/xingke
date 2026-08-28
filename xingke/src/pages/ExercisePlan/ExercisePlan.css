@@ -1,0 +1,192 @@
+.exercise-plan {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.exercise-plan__summary {
+  display: flex;
+  gap: 40px;
+  padding: 24px;
+}
+
+.exercise-summary__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.exercise-summary__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--mint-50);
+  color: var(--mint-500);
+  padding: 10px;
+}
+
+.exercise-summary__item > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.exercise-summary__value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.exercise-summary__label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.exercise-plan__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exercise-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  transition: all var(--transition);
+}
+
+.exercise-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.exercise-card--today {
+  border-color: var(--mint-300);
+  background: var(--mint-50);
+}
+
+.exercise-card--done {
+  opacity: 0.7;
+}
+
+.exercise-card__day {
+  width: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.exercise-card__day-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.exercise-card__today-badge {
+  font-size: 10px;
+  color: var(--mint-600);
+  background: var(--mint-200);
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+}
+
+.exercise-card__body {
+  flex: 1;
+}
+
+.exercise-card__info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.exercise-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.exercise-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.exercise-card__meta span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.exercise-card__type {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.exercise-card__action {
+  flex-shrink: 0;
+}
+
+.exercise-card__done {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--color-success);
+  font-weight: 500;
+}
+
+.exercise-card__start {
+  padding: 7px 16px;
+  font-size: 13px;
+}
+
+.exercise-card__arrow {
+  color: var(--text-tertiary);
+}
+
+/* —— 刷新按钮 —— */
+.exercise-plan__refresh {
+  margin-left: auto;
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
+/* —— AI提示 —— */
+.exercise-plan__ai-tip {
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 3px solid var(--mint-400);
+}
+
+.ai-tip__text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* —— 加载状态 —— */
+.exercise-record__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px;
+  color: var(--mint-500);
+  font-size: 14px;
+}
+
+/* —— spin动画 —— */
+.spin {
+  animation: spin 1s linear infinite;
+}

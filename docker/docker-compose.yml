@@ -1,0 +1,207 @@
+# ShapeAI 数据库服务栈
+# 所有服务共用 shapeai-net 自定义 bridge 网络
+# 使用: docker compose -f docker/docker-compose.yml up -d
+
+networks:
+  shapeai-net:
+    name: shapeai-net
+    driver: bridge
+
+services:
+  # ─── PostgreSQL + pgvector (主数据库) ───
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: shapeai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shapeai
+      POSTGRES_PASSWORD: shapeai123
+      POSTGRES_DB: shapeai
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - shapeai-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shapeai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── Redis (缓存/短期记忆/Session 热数据) ───
+  redis:
+    image: redis:7-alpine  # 本地已有镜像
+    container_name: shapeai-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - shapeai-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── MySQL (同步副本，只读分析) ───
+  mysql:
+    image: mysql:8.0.32  # 本地已有镜像
+    container_name: shapeai-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: shapeai
+      MYSQL_USER: shapeai
+      MYSQL_PASSWORD: shapeai123
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - shapeai-net
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p123456"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Milvus 向量数据库 (依赖 etcd + minio) ───
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: shapeai-etcd
+    restart: unless-stopped
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+    volumes:
+      - etcd_data:/etcd
+    networks:
+      - shapeai-net
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+
+  # ─── MinIO (对象存储,冰箱食材图片) ───
+  # API: http://localhost:19000  Console: http://localhost:19001
+  # 登录: minioadmin / minioadmin
+  # 注: 宿主机 9000/9001 被 Windows Hyper-V 保留端口占用,改用 19000/19001
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    container_name: shapeai-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/minio/data
+    networks:
+      - shapeai-net
+    command: minio server /minio/data --console-address ":9001"
+    ports:
+      - "19000:9000"   # S3 API (宿主机 19000 -> 容器 9000)
+      - "19001:9001"   # Web Console (宿主机 19001 -> 容器 9001)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: shapeai-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    ports:
+      - "19530:19530"
+    depends_on:
+      - etcd
+      - minio
+    volumes:
+      - milvus_data:/var/lib/milvus
+    networks:
+      - shapeai-net
+
+  # ─── Attu: Milvus 可视化管理工具 ───
+  # Web 界面: http://localhost:8000
+  attu:
+    image: zilliz/attu:v2.4
+    container_name: shapeai-attu
+    restart: unless-stopped
+    environment:
+      MILVUS_URL: milvus:19530
+    ports:
+      - "8000:3000"
+    depends_on:
+      - milvus
+    networks:
+      - shapeai-net
+
+  # ─── pgAdmin: PostgreSQL 可视化管理 ───
+  # Web 界面: http://localhost:8080
+  # 登录: admin@shapeai.com / shapeai123
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: shapeai-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@shapeai.com
+      PGADMIN_DEFAULT_PASSWORD: shapeai123
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    networks:
+      - shapeai-net
+
+  # ─── phpMyAdmin: MySQL 可视化管理 ───
+  # Web 界面: http://localhost:8081
+  # 登录: root / 123456
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: shapeai-phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: root
+      PMA_PASSWORD: "123456"
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "8081:80"
+    depends_on:
+      - mysql
+    networks:
+      - shapeai-net
+
+  # ─── Redis Commander: Redis 可视化管理 ───
+  # Web 界面: http://localhost:8082
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: shapeai-redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+      HTTP_USER: admin
+      HTTP_PASSWORD: shapeai123
+    ports:
+      - "8082:8081"
+    depends_on:
+      - redis
+    networks:
+      - shapeai-net
+
+volumes:
+  pgdata:
+  redis_data:
+  mysql_data:
+  etcd_data:
+  minio_data:
+  milvus_data:

@@ -1,0 +1,602 @@
+.takeout {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ─── 概览卡片 ─── */
+.takeout__summary {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 20px 24px;
+  flex-wrap: wrap;
+}
+
+.takeout-summary__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 140px;
+}
+
+.takeout-summary__icon {
+  color: var(--mint-400);
+  flex-shrink: 0;
+}
+
+.takeout-summary__value {
+  display: block;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.takeout-summary__value--accent {
+  color: var(--mint-500);
+}
+
+.takeout-summary__label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+/* ─── 分类筛选 ─── */
+.takeout__tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.takeout-tab {
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  transition: all var(--transition);
+}
+
+.takeout-tab:hover {
+  border-color: var(--mint-300);
+  color: var(--mint-600);
+}
+
+.takeout-tab--active {
+  background: var(--mint-400);
+  color: var(--text-on-brand);
+  border-color: var(--mint-400);
+}
+
+.takeout-tab--active:hover {
+  background: var(--mint-500);
+  color: var(--text-on-brand);
+}
+
+/* ─── 菜品分组 ─── */
+.takeout__dishes {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.takeout__loading,
+.takeout__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px;
+  color: var(--mint-500);
+  font-size: 14px;
+}
+
+.takeout-group__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  padding-left: 4px;
+  position: relative;
+}
+
+.takeout-group__title::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 14px;
+  background: var(--mint-400);
+  border-radius: 2px;
+}
+
+.takeout-group__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+/* ─── 菜品卡片 ─── */
+.dish-card {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.dish-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.dish-card__img {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  background: var(--bg-hover);
+}
+
+.dish-card__img--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.dish-card__body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.dish-card__name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.dish-card__desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dish-card__meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.dish-card__meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dish-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+}
+
+.dish-card__price {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-warning);
+}
+
+.dish-card__price--free {
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.dish-card__order-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* ─── 今日订单列表 ─── */
+.takeout__orders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.takeout-orders__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.takeout-orders__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.takeout-order-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.takeout-order-row--cancelled {
+  opacity: 0.55;
+}
+
+.takeout-order-row__img {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--bg-hover);
+  flex-shrink: 0;
+}
+
+.takeout-order-row__img--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.takeout-order-row__info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.takeout-order-row__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.takeout-order-row__qty {
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.takeout-order-row__meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.takeout-order-row__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.takeout-order-row__status {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.takeout-order-row__status--stats {
+  background: var(--mint-50);
+  color: var(--mint-600);
+}
+
+.takeout-order-row__status--skip {
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+}
+
+.takeout-order-row__status--cancelled {
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--color-danger);
+}
+
+.takeout-order-row__cancel {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--color-danger);
+  border-color: var(--border-light);
+}
+
+.takeout-order-row__cancel:hover {
+  background: rgba(239, 68, 68, 0.06);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+/* ─── 下单弹窗 ─── */
+.modal.takeout-checkout {
+  width: 460px;
+  max-width: 92vw;
+}
+
+.takeout-checkout__dish {
+  display: flex;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-light);
+  margin-bottom: 16px;
+}
+
+.takeout-checkout__img {
+  width: 100px;
+  height: 100px;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+  background: var(--bg-hover);
+  flex-shrink: 0;
+}
+
+.takeout-checkout__img--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.takeout-checkout__info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.takeout-checkout__name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.takeout-checkout__desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.takeout-checkout__meta {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: auto;
+}
+
+.takeout-checkout__meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.takeout-checkout__price {
+  color: var(--color-warning);
+  font-weight: 700;
+}
+
+.takeout-checkout__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-light);
+  flex-wrap: wrap;
+}
+
+.takeout-checkout__label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  width: 44px;
+  flex-shrink: 0;
+}
+
+.takeout-checkout__meal-types {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.takeout-meal-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  border-radius: var(--radius-full);
+  background: var(--bg-page);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-light);
+  transition: all var(--transition);
+}
+
+.takeout-meal-btn:hover {
+  border-color: var(--mint-300);
+  color: var(--mint-600);
+}
+
+.takeout-meal-btn--active {
+  background: var(--mint-400);
+  color: var(--text-on-brand);
+  border-color: var(--mint-400);
+}
+
+.takeout-checkout__quantity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.takeout-qty-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-page);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+
+.takeout-qty-btn:hover:not(:disabled) {
+  background: var(--mint-50);
+  border-color: var(--mint-300);
+  color: var(--mint-600);
+}
+
+.takeout-qty-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.takeout-qty-value {
+  min-width: 28px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.takeout-checkout__total {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* ─── 统计勾选 ─── */
+.takeout-checkout__stats-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  margin: 16px 0 8px;
+  background: var(--mint-50);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.takeout-checkout__stats-toggle:hover {
+  background: var(--mint-100);
+}
+
+.takeout-checkout__stats-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--mint-500);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.takeout-checkout__stats-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mint-700);
+  cursor: pointer;
+}
+
+.takeout-checkout__stats-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  padding: 0 4px 12px;
+}
+
+/* ─── 操作按钮 ─── */
+.takeout-checkout__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+/* ─── Toast ─── */
+.takeout-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-on-brand);
+  z-index: 1000;
+  animation: fadeIn 0.25s ease;
+  box-shadow: var(--shadow-md);
+  max-width: 80vw;
+}
+
+.takeout-toast--ok {
+  background: var(--mint-500);
+}
+
+.takeout-toast--err {
+  background: var(--color-danger);
+}
+
+/* ─── 响应式 ─── */
+@media (max-width: 768px) {
+  .takeout {
+    padding: 16px;
+  }
+
+  .takeout__summary {
+    gap: 16px;
+    padding: 16px;
+  }
+
+  .takeout-summary__item {
+    min-width: calc(50% - 8px);
+  }
+
+  .takeout-group__grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+  }
+
+  .dish-card__img {
+    height: 120px;
+  }
+
+  .takeout-order-row {
+    flex-wrap: wrap;
+  }
+
+  .takeout-checkout {
+    width: 100%;
+  }
+}

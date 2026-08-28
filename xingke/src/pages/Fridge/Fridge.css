@@ -1,0 +1,534 @@
+.fridge {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ─── 概览 ─── */
+.fridge__summary {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 22px 24px;
+  flex-wrap: wrap;
+}
+
+.fridge-summary__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fridge-summary__icon {
+  color: var(--mint-500);
+}
+
+.fridge-summary__value {
+  display: block;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.fridge-summary__value--warn {
+  color: #f59e0b;
+}
+
+.fridge-summary__label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.fridge-summary__actions {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+}
+
+.fridge__file-input {
+  display: none;
+}
+
+/* ─── 识别提示 ─── */
+.fridge__recognizing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 20px;
+  color: var(--mint-500);
+  font-size: 14px;
+}
+
+.fridge__recognition {
+  padding: 16px 20px;
+}
+
+.fridge-recognition__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.fridge-recognition__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--mint-600);
+}
+
+.fridge-recognition__close {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  transition: all var(--transition);
+}
+
+.fridge-recognition__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.fridge-recognition__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fridge-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--mint-50);
+  color: var(--mint-600);
+  font-size: 13px;
+}
+
+.fridge-chip em {
+  font-style: normal;
+  margin-left: 4px;
+  color: var(--text-secondary);
+}
+
+/* ─── 分类 tabs ─── */
+.fridge__tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fridge-tab {
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.fridge-tab:hover {
+  background: var(--bg-hover);
+}
+
+.fridge-tab--active {
+  background: var(--mint-500);
+  color: #0d1f1c;
+  font-weight: 600;
+}
+
+/* ─── 食材列表 ─── */
+.fridge__items {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fridge-group__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.fridge-group__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.fridge-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.fridge-card__img {
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+  background: var(--bg-page);
+}
+
+.fridge-card__img--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.fridge-card--empty {
+  opacity: 0.6;
+}
+
+.fridge-card__body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fridge-card__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fridge-card__qty {
+  font-size: 13px;
+  color: var(--mint-500);
+  font-weight: 600;
+}
+
+.fridge-card--empty .fridge-card__qty {
+  color: #f59e0b;
+}
+
+.fridge-card__meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.fridge-card__time {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.fridge-card__time--soon {
+  color: #d97706;
+  font-weight: 500;
+}
+
+.fridge-card__time--over {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.fridge-card__footer {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.fridge-card__btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.fridge__loading,
+.fridge__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px;
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+/* ─── 菜谱推荐 ─── */
+.fridge__recipes {
+  padding: 20px 24px;
+  background: linear-gradient(135deg, rgba(94, 234, 212, 0.06), rgba(167, 139, 250, 0.06));
+  border: 1px solid rgba(94, 234, 212, 0.2);
+}
+
+.fridge-recipes__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.fridge-recipes__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--mint-600);
+}
+
+.fridge-recipes__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fridge-recipes__pref {
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-size: 13px;
+  min-width: 180px;
+}
+
+.fridge-recipes__pref:focus {
+  outline: none;
+  border-color: var(--mint-300);
+  box-shadow: 0 0 0 3px var(--mint-50);
+}
+
+.fridge-recipes__loading,
+.fridge-recipes__empty {
+  padding: 18px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fridge-recipes__list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.recipe-card {
+  padding: 18px 20px;
+  border-radius: var(--radius-lg, 14px);
+  background: linear-gradient(
+    145deg,
+    rgba(94, 234, 212, 0.10) 0%,
+    rgba(13, 31, 28, 0.55) 42%,
+    rgba(45, 212, 191, 0.05) 100%
+  );
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  transition: border-color 0.25s, transform 0.25s, box-shadow 0.25s;
+}
+
+.recipe-card:hover {
+  border-color: rgba(94, 234, 212, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(94, 234, 212, 0.15);
+}
+
+.recipe-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.recipe-card__name {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--mint-400, #5eead4);
+  text-shadow: 0 0 16px rgba(94, 234, 212, 0.35);
+}
+
+.recipe-card__cal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: linear-gradient(
+    135deg,
+    rgba(251, 191, 36, 0.18),
+    rgba(245, 158, 11, 0.28)
+  );
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fcd34d;
+  white-space: nowrap;
+}
+
+.recipe-card__desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.recipe-card__ingredients {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.recipe-ing {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.recipe-ing em {
+  font-style: normal;
+  margin-left: 4px;
+  opacity: 0.8;
+}
+
+.recipe-ing--have {
+  background: rgba(94, 234, 212, 0.16);
+  color: var(--mint-400, #5eead4);
+  border: 1px solid rgba(94, 234, 212, 0.25);
+}
+
+.recipe-ing--miss {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.recipe-card__steps {
+  margin: 8px 0 12px 18px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text-secondary);
+  background: rgba(13, 31, 28, 0.45);
+  border-radius: var(--radius-md);
+  border-left: 3px solid rgba(94, 234, 212, 0.45);
+}
+
+.recipe-card__steps li {
+  margin-bottom: 4px;
+}
+
+.recipe-card__actions .btn {
+  background: linear-gradient(135deg, #2dd4bf, #14b8a6);
+  border: none;
+  box-shadow: 0 4px 16px rgba(45, 212, 191, 0.3);
+}
+
+.recipe-card__actions .btn:hover:not(:disabled) {
+  box-shadow: 0 6px 22px rgba(45, 212, 191, 0.45);
+}
+
+/* ─── 表单弹窗 ─── */
+.fridge-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fridge-form__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fridge-form__row--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.fridge-form__row--inline .fridge-form__label {
+  min-width: 48px;
+}
+
+.fridge-form__label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.fridge-form__input,
+.fridge-form__select {
+  flex: 1;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-page);
+}
+
+.fridge-form__input:focus,
+.fridge-form__select:focus {
+  outline: none;
+  border-color: var(--mint-300);
+  box-shadow: 0 0 0 3px var(--mint-50);
+}
+
+.fridge-form__line {
+  display: flex;
+  gap: 12px;
+}
+
+.fridge-form__advanced summary {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.fridge-form__advanced .fridge-form__line {
+  margin-top: 8px;
+}
+
+.fridge-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* ─── Toast ─── */
+.fridge-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  z-index: 1000;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+
+.fridge-toast--ok {
+  background: var(--mint-500);
+  color: #0d1f1c;
+}
+
+.fridge-toast--err {
+  background: #ef4444;
+  color: #fff;
+}

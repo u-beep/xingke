@@ -1,0 +1,473 @@
+.dashboard {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ============ 顶部指标卡片矩阵 ============ */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.metric-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.metric-card__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--mint-50);
+  color: var(--mint-500);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.metric-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.metric-card__label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.metric-card__value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.metric-card__value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.metric-card__unit {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.metric-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.metric-card__change {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.metric-card__change--down {
+  color: var(--color-success);
+}
+
+.metric-card__change--up {
+  color: var(--color-danger);
+}
+
+.metric-card__change-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.metric-card__extra {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+/* ============ 中下分栏 ============ */
+.dashboard__main {
+  display: flex;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* —— 左侧趋势图 —— */
+.dashboard__chart {
+  flex: 0 0 65%;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.chart-dims {
+  display: flex;
+  gap: 8px;
+}
+
+.chart-dim {
+  padding: 5px 14px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-light);
+  background: var(--bg-card);
+  transition: all var(--transition);
+}
+
+.chart-dim:hover {
+  background: var(--bg-hover);
+}
+
+.chart-dim--active {
+  background: var(--mint-50);
+  font-weight: 600;
+}
+
+.chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chart-range {
+  display: flex;
+  background: var(--bg-page);
+  border-radius: var(--radius-md);
+  padding: 3px;
+}
+
+.chart-range-btn {
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  transition: all var(--transition);
+}
+
+.chart-range-btn--active {
+  background: var(--bg-card);
+  color: var(--mint-600);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.chart-export {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-light);
+  transition: all var(--transition);
+}
+
+.chart-export:hover {
+  background: var(--mint-50);
+  border-color: var(--mint-300);
+  color: var(--mint-600);
+}
+
+.chart-body {
+  flex: 1;
+  min-height: 280px;
+}
+
+/* —— 图表tooltip —— */
+.chart-tooltip {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-lg);
+  min-width: 160px;
+}
+
+.chart-tooltip__date {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.chart-tooltip__row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.chart-tooltip__row span:first-child {
+  color: var(--text-tertiary);
+}
+
+.chart-tooltip__row span:last-child {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.chart-tooltip__row--sub {
+  padding-top: 4px;
+  margin-top: 4px;
+  border-top: 1px dashed var(--border-light);
+}
+
+/* —— 图表数据说明 —— */
+.chart-summary {
+  display: flex;
+  justify-content: space-around;
+  padding: 16px 0 0;
+  margin-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+.chart-summary__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.chart-summary__label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.chart-summary__value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.chart-summary__value--down {
+  color: var(--color-success);
+}
+
+/* ============ 右侧信息区 ============ */
+.dashboard__sidebar {
+  flex: 0 0 33%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.side-module {
+  padding: 18px 20px;
+}
+
+.side-module__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+/* —— 目标进度环 —— */
+.goal-ring {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  margin: 0 auto 16px;
+}
+
+.goal-ring__svg {
+  width: 100%;
+  height: 100%;
+}
+
+.goal-ring__center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+}
+
+.goal-ring__percent {
+  font-size: 28px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--mint-400), var(--mint-600));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.goal-ring__label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.goal-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.goal-info__row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.goal-info__value {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.goal-info__value--accent {
+  color: var(--mint-500);
+}
+
+.goal-info__tip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--mint-500);
+  background: var(--mint-50);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+}
+
+/* —— 周期数据摘要 —— */
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px;
+  background: var(--bg-page);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.summary-item__icon {
+  color: var(--mint-400);
+  margin-bottom: 2px;
+}
+
+.summary-item__value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.summary-item__label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* —— AI解读模块 —— */
+.side-module--ai {
+  background: linear-gradient(135deg, var(--mint-50), #fff);
+  border-color: var(--mint-200);
+}
+
+.ai-summary {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin-bottom: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: var(--radius-md);
+}
+
+.ai-analyze-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: 14px;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.ai-analyze-options {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-analyze-option {
+  flex: 1;
+  padding: 7px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--mint-600);
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--mint-200);
+  transition: all var(--transition);
+}
+
+.ai-analyze-option:hover {
+  background: var(--bg-card);
+  border-color: var(--mint-300);
+}
+
+/* —— 快速录入体重按钮 —— */
+.quick-weight-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--mint-400);
+  color: var(--text-on-brand);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-lg);
+  transition: all var(--transition);
+  z-index: 90;
+}
+
+.quick-weight-btn:hover {
+  background: var(--mint-500);
+  transform: scale(1.08);
+}

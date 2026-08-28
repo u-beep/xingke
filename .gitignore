@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+uv.lock
+
+# Packaging
+*.egg-info/
+build/
+dist/
+
+# Test and lint caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Local scratch space
+tmp/
+.worktrees/
+
+# Local secrets and provider configuration
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+
+# IDE config
+.idea/
+.vscode/
+
+# ShapeAI runtime data
+.shapeai/
+
+# Docker pull logs
+docker_pull.log
+
+# Frontend build artifacts
+xingke/dist/
+xingke/tsconfig.tsbuildinfo
+xingke/node_modules/
+
