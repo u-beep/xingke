@@ -50,7 +50,7 @@ tmp/
 docker_pull.log
 
 # Frontend build artifacts
-xingke/dist/
-xingke/tsconfig.tsbuildinfo
-xingke/node_modules/
+xingke*/dist/
+xingke*/tsconfig.tsbuildinfo
+xingke*/node_modules/
 
