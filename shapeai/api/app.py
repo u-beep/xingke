@@ -20,10 +20,12 @@ from ..safety import SafetyGuard
 from ..config import API_KEY, __version__, SYNC_ENABLED, SYNC_INTERVAL_SECONDS, CRAWLER_ENABLED, CRAWLER_INTERVAL_SECONDS
 from ..sync_pg_to_mysql import SyncScheduler
 from ..knowledge_fetcher import KnowledgeFetcher, FetchScheduler
+from .security import auth_middleware
 from .routes import (
     chat_router, tools_router, knowledge_router, image_router, profile_router,
     weight_router, diet_router, hydration_router, exercise_router, exercise_plan_router, workout_router, dashboard_router,
     goals_router, feedback_router, export_router, takeout_router, fridge_router,
+    auth_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -193,6 +195,7 @@ def create_app(gateway: ModelGateway | None = None) -> FastAPI:
     app.state = state
 
     # 注册路由
+    app.include_router(auth_router, prefix="/api/v1")
     app.include_router(chat_router, prefix="/api/v1")
     app.include_router(tools_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
@@ -210,6 +213,9 @@ def create_app(gateway: ModelGateway | None = None) -> FastAPI:
     app.include_router(export_router, prefix="/api/v1")
     app.include_router(takeout_router, prefix="/api/v1")
     app.include_router(fridge_router, prefix="/api/v1")
+
+    # 全局登录鉴权中间件（解析 Bearer Token -> request.state.user_id，未登录访问受保护接口返回 401）
+    app.middleware("http")(auth_middleware)
 
     # 健康检查
     @app.get("/health", tags=["系统"], summary="健康检查")

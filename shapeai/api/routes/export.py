@@ -7,6 +7,7 @@ import io
 import csv
 
 from ...records import WeightStore
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/export", tags=["数据导出"])
 
@@ -18,7 +19,7 @@ async def export_weight_history(
     format: str = "csv",
 ):
     """导出体重历史数据为 CSV 或 JSON。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = WeightStore()
     records = store.get_history(user_id, days=days, limit=1000)
 

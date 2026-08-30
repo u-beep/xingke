@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request
 
 from ..models import FoodRecognitionRequest
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/vision", tags=["图像识别"])
 
@@ -17,7 +18,7 @@ async def recognize_food(request: FoodRecognitionRequest, req: Request):
     result = service.recognize(
         image_base64=request.image_base64,
         description=request.description,
-        user_id=request.user_id,
+        user_id=get_auth_user_id(req, request.user_id),
     )
     return result
 

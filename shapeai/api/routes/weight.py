@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from ...records import WeightStore, WeightRecord
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/weight", tags=["体重记录"])
 
@@ -21,7 +22,7 @@ class WeightRecordRequest(BaseModel):
 @router.post("/record", summary="记录体重")
 async def record_weight(request: WeightRecordRequest, req: Request):
     """记录用户体重及相关身体数据。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = WeightStore()
     record = WeightRecord(
         user_id=user_id,
@@ -46,7 +47,7 @@ async def get_weight_history(
     limit: int = 100,
 ):
     """查询用户体重历史记录。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = WeightStore()
     records = store.get_history(user_id, days=days, limit=limit)
     return {
@@ -59,7 +60,7 @@ async def get_weight_history(
 @router.get("/latest", summary="获取最新体重")
 async def get_latest_weight(req: Request):
     """获取用户最新体重记录。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = WeightStore()
     record = store.get_latest(user_id)
     return {
@@ -73,7 +74,7 @@ async def get_weight_stats(
     days: int = 7,
 ):
     """获取指定周期内的体重统计。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = WeightStore()
     stats = store.get_stats(user_id, days=days)
     return stats

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from ...user_profile import ProfileStore, UserProfile
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/profile", tags=["用户资料"])
 
@@ -37,7 +38,7 @@ class ProfileUpdateRequest(BaseModel):
 async def get_my_profile(req: Request):
     """获取当前登录用户的个人资料。"""
     # 从请求头或 session 获取 user_id
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
 
     store = ProfileStore()
     profile = store.get(user_id)
@@ -53,7 +54,7 @@ async def get_my_profile(req: Request):
 @router.post("/me", summary="更新当前用户资料")
 async def update_my_profile(req: Request, body: ProfileUpdateRequest):
     """更新当前登录用户的个人资料。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
 
     store = ProfileStore()
     profile = store.get(user_id)
@@ -87,7 +88,7 @@ async def get_user_profile(user_id: str, req: Request):
 @router.delete("/me", summary="清空当前用户资料")
 async def clear_my_profile(req: Request):
     """清空当前用户的所有个人资料。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
 
     store = ProfileStore()
     profile = UserProfile(user_id=user_id)  # 创建空资料
@@ -140,7 +141,7 @@ async def get_calorie_budget(req: Request, user_id: str = None):
     - suggested_budget：根据身体数据计算的 TDEE 建议值（缺身体数据则 null）
     - has_custom：是否已自定义
     """
-    uid = user_id or req.headers.get("X-User-Id", "anonymous")
+    uid = get_auth_user_id(req, user_id)
     store = ProfileStore()
     profile = store.get(uid)
     suggested = _compute_suggested_tdee(profile)
@@ -155,7 +156,7 @@ async def get_calorie_budget(req: Request, user_id: str = None):
 @router.put("/calorie-budget", summary="设置每日热量目标预算")
 async def set_calorie_budget(body: CalorieBudgetRequest, req: Request):
     """设置用户每日热量目标预算（kcal），覆盖 TDEE 建议值。"""
-    uid = body.user_id or req.headers.get("X-User-Id", "anonymous")
+    uid = get_auth_user_id(req, body.user_id)
     store = ProfileStore()
     profile = store.get(uid)
     profile.daily_calorie_budget = body.daily_calorie_budget

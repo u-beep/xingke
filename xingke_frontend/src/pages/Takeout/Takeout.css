@@ -600,3 +600,187 @@
     width: 100%;
   }
 }
+
+/* === 店家列表（仿美团首页店列） === */
+
+.takeout-shops {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.shop-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.shop-card:hover {
+  transform: translateY(-2px);
+}
+
+.shop-card__logo {
+  width: 76px;
+  height: 76px;
+  border-radius: 12px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #f5f5f5;
+}
+
+.shop-card__logo--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c0c4cc;
+}
+
+.shop-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shop-card__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shop-card__name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shop-card__rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ff9d00;
+  flex-shrink: 0;
+}
+
+.shop-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: #909399;
+  flex-wrap: wrap;
+}
+
+.shop-card__tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.shop-card__tag {
+  font-size: 11px;
+  color: #5a8bff;
+  background: rgba(90, 139, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.shop-card__arrow {
+  font-size: 20px;
+  color: #c0c4cc;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* === 店家门头（二级页） === */
+
+.takeout-shop-header {
+  padding: 14px 16px;
+}
+
+.takeout-shop-header__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: none;
+  border: none;
+  color: #5a8bff;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 0;
+  margin-bottom: 8px;
+}
+
+.takeout-shop-header__main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.takeout-shop-header__logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #f5f5f5;
+}
+
+.takeout-shop-header__logo--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #c0c4cc;
+}
+
+.takeout-shop-header__info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.takeout-shop-header__name {
+  font-size: 18px;
+  font-weight: 700;
+  color: #303133;
+  margin: 0;
+}
+
+.takeout-shop-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: #909399;
+  flex-wrap: wrap;
+}
+
+.takeout-shop-header__rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #ff9d00;
+  font-weight: 600;
+}
+
+.takeout-checkout__shop {
+  font-size: 12px;
+  color: #909399;
+}
+
+.takeout-order-row__shop {
+  color: #909399;
+  font-size: 12px;
+}

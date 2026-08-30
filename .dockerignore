@@ -1,0 +1,17 @@
+.git
+.idea
+.venv
+venv
+**/__pycache__
+**/*.pyc
+xingke_frontend
+docker
+.shapeai
+data
+.env
+tools
+shapeai.egg-info
+.python-version
+.catpaw
+.trae
+*.md

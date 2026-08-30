@@ -18,6 +18,18 @@ PG_SCHEMA_SQL = """
 -- 启用 pgvector 扩展
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- 用户账号表（注册/登录）
+CREATE TABLE IF NOT EXISTS users (
+    id            BIGSERIAL PRIMARY KEY,
+    username      VARCHAR(64) NOT NULL UNIQUE,
+    password_hash VARCHAR(256) NOT NULL,
+    nickname      VARCHAR(64),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_login_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
+
 -- 会话表
 CREATE TABLE IF NOT EXISTS sessions (
     id          VARCHAR(64) PRIMARY KEY,
@@ -135,10 +147,26 @@ CREATE INDEX IF NOT EXISTS idx_diet_records_source ON diet_records (source);
 CREATE INDEX IF NOT EXISTS idx_diet_records_include_stats ON diet_records (include_in_stats);
 CREATE INDEX IF NOT EXISTS idx_diet_records_order_id ON diet_records (order_id);
 
--- 外卖菜品表（各类外卖菜品信息 + 配套图片链接）
+-- 外卖店家表（连锁快餐品牌维度）
+CREATE TABLE IF NOT EXISTS takeout_shops (
+    id                BIGSERIAL PRIMARY KEY,
+    shop_name         VARCHAR(128) NOT NULL UNIQUE,
+    category          VARCHAR(64) DEFAULT '',
+    monthly_sales     INTEGER DEFAULT 0,
+    delivery_minutes  INTEGER DEFAULT 30,
+    min_order_price   FLOAT DEFAULT 0,
+    delivery_fee      FLOAT DEFAULT 0,
+    rating            FLOAT DEFAULT 4.5,
+    logo_url          VARCHAR(512),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_takeout_shops_category ON takeout_shops (category);
+
+-- 外卖菜品表（属于某店家, 含店内分类）
 CREATE TABLE IF NOT EXISTS takeout_dishes (
     id              BIGSERIAL PRIMARY KEY,
     dish_name       VARCHAR(128) NOT NULL,
+    shop_name       VARCHAR(128) DEFAULT '' REFERENCES takeout_shops(shop_name) ON DELETE CASCADE,
     category        VARCHAR(64) DEFAULT '',
     description     TEXT DEFAULT '',
     amount_g        FLOAT,
@@ -153,13 +181,15 @@ CREATE TABLE IF NOT EXISTS takeout_dishes (
 );
 CREATE INDEX IF NOT EXISTS idx_takeout_dishes_category ON takeout_dishes (category);
 CREATE INDEX IF NOT EXISTS idx_takeout_dishes_available ON takeout_dishes (available);
+CREATE INDEX IF NOT EXISTS idx_takeout_dishes_shop ON takeout_dishes (shop_name);
 
--- 外卖订单表（用户确认下单的外卖订单）
+-- 外卖订单表（用户确认下单的外卖订单, shop_name 为下单时快照）
 CREATE TABLE IF NOT EXISTS takeout_orders (
     id              BIGSERIAL PRIMARY KEY,
     user_id         VARCHAR(64) NOT NULL,
     dish_id         BIGINT NOT NULL REFERENCES takeout_dishes(id) ON DELETE CASCADE,
     dish_name       VARCHAR(128) NOT NULL,
+    shop_name       VARCHAR(128) DEFAULT '',
     quantity        INTEGER NOT NULL DEFAULT 1,
     meal_type       VARCHAR(32) NOT NULL DEFAULT 'lunch',
     include_in_stats BOOLEAN NOT NULL DEFAULT TRUE,
@@ -260,6 +290,17 @@ CREATE INDEX IF NOT EXISTS idx_fridge_items_user_expires ON fridge_items (user_i
 
 MYSQL_SCHEMA_SQL = """
 -- MySQL 同步副本（只读分析用，无外键约束，简化字段类型）
+
+CREATE TABLE IF NOT EXISTS users (
+    id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+    username      VARCHAR(64) NOT NULL UNIQUE,
+    password_hash VARCHAR(256) NOT NULL,
+    nickname      VARCHAR(64),
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_login_at DATETIME NULL
+);
+CREATE INDEX idx_users_username ON users (username);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id          VARCHAR(64) PRIMARY KEY,

@@ -54,3 +54,6 @@ xingke*/dist/
 xingke*/tsconfig.tsbuildinfo
 xingke*/node_modules/
 
+# Runtime-generated dish images (local only)
+xingke_frontend/public/dishes/
+

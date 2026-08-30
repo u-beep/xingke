@@ -21,25 +21,42 @@ import type {
   KnowledgeSearchRequest,
   KnowledgeAddRequest,
 } from './types'
+import { getToken, clearAuth, redirectToLogin } from './authStore'
 
 // —— 基础配置 ——
 
 const API_BASE = '/api/v1'
 
-/** 通用 JSON 请求 */
-async function request<T>(
+/** 通用请求头：自动附带登录 Token */
+function buildHeaders(extra?: HeadersInit): HeadersInit {
+  const token = getToken()
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  }
+}
+
+/** 401 统一处理：清除本地登录态并跳转登录页 */
+function handleUnauthorized(): void {
+  clearAuth()
+  redirectToLogin()
+}
+
+/** 通用 JSON 请求（导出供 auth 模块复用） */
+export async function request<T>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> {
   const resp = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers: buildHeaders(options.headers),
     ...options,
   })
 
   if (!resp.ok) {
+    if (resp.status === 401) {
+      handleUnauthorized()
+    }
     const error = await resp.json().catch(() => ({ detail: resp.statusText }))
     throw new Error(error.detail?.[0]?.msg || error.detail || `请求失败: ${resp.status}`)
   }
@@ -81,12 +98,15 @@ export const chatApi = {
   async *stream(data: ChatRequest, signal?: AbortSignal): AsyncGenerator<{ token?: string; done?: boolean; session_id?: string }> {
     const resp = await fetch(`${API_BASE}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildHeaders(),
       body: JSON.stringify(data),
       signal,
     })
 
     if (!resp.ok) {
+      if (resp.status === 401) {
+        handleUnauthorized()
+      }
       throw new Error(`流式对话请求失败: ${resp.status}`)
     }
 
@@ -846,7 +866,9 @@ export const exportApi = {
   /** 导出体重历史 */
   async weightHistory(days: number = 30, format: string = 'csv'): Promise<Blob> {
     const query = buildQuery({ days, format })
-    const resp = await fetch(`${API_BASE}/export/weight-history${query}`)
+    const resp = await fetch(`${API_BASE}/export/weight-history${query}`, {
+      headers: buildHeaders(),
+    })
     if (!resp.ok) throw new Error(`导出失败: ${resp.status}`)
     return resp.blob()
   },
@@ -856,9 +878,32 @@ export const exportApi = {
 //  外卖选购模块 API
 // ============================================
 
+export interface TakeoutShopInfo {
+  id: number
+  shop_name: string
+  category: string
+  monthly_sales: number
+  delivery_minutes: number
+  min_order_price: number
+  delivery_fee: number
+  rating: number
+  logo_url: string | null
+  created_at: string | null
+}
+
+export interface TakeoutMenuGroup {
+  category: string
+  dishes: TakeoutDishInfo[]
+}
+
+export interface TakeoutShopDetail extends TakeoutShopInfo {
+  menu_groups: TakeoutMenuGroup[]
+}
+
 export interface TakeoutDishInfo {
   id: number
   dish_name: string
+  shop_name: string
   category: string
   description: string
   amount_g: number | null
@@ -877,6 +922,7 @@ export interface TakeoutOrderInfo {
   user_id: string
   dish_id: number
   dish_name: string
+  shop_name: string
   quantity: number
   meal_type: string
   include_in_stats: boolean
@@ -908,9 +954,25 @@ export interface PlaceOrderResult {
 }
 
 export const takeoutApi = {
-  /** 获取外卖菜品菜单 */
-  async dishes(category?: string): Promise<{ dishes: TakeoutDishInfo[]; count: number }> {
+  /** 获取店家列表（仿美团店列，可按品类过滤） */
+  async shops(category?: string): Promise<{ shops: TakeoutShopInfo[]; count: number }> {
     const query = buildQuery({ category })
+    return request<any>(`${API_BASE}/takeout/shops${query}`)
+  },
+
+  /** 获取店家品类列表 */
+  async shopCategories(): Promise<{ categories: string[] }> {
+    return request<any>(`${API_BASE}/takeout/shop-categories`)
+  },
+
+  /** 获取店家详情 + 按店内分类分组的菜单 */
+  async shopDetail(shopName: string): Promise<TakeoutShopDetail> {
+    return request<any>(`${API_BASE}/takeout/shops/${encodeURIComponent(shopName)}`)
+  },
+
+  /** 获取外卖菜品菜单（可按店家/分类过滤） */
+  async dishes(category?: string, shopName?: string): Promise<{ dishes: TakeoutDishInfo[]; count: number }> {
+    const query = buildQuery({ category, shop_name: shopName })
     return request<any>(`${API_BASE}/takeout/dishes${query}`)
   },
 

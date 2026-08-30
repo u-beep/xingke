@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import date
 
 from ...records import GoalStore, UserGoal
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/goals", tags=["目标管理"])
 
@@ -33,7 +34,7 @@ class UpdateGoalRequest(BaseModel):
 @router.post("", summary="创建目标")
 async def create_goal(request: CreateGoalRequest, req: Request):
     """创建新目标。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = GoalStore()
     deadline = None
     if request.deadline:
@@ -58,7 +59,7 @@ async def create_goal(request: CreateGoalRequest, req: Request):
 @router.get("/progress", summary="获取目标进度")
 async def get_goal_progress(req: Request):
     """获取用户所有活跃目标的进度。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = GoalStore()
     progress = store.get_progress_summary(user_id)
     return progress
@@ -70,7 +71,7 @@ async def list_goals(
     status: Optional[str] = None,
 ):
     """获取用户目标列表。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = GoalStore()
     goals = store.get_user_goals(user_id, status=status)
     return {

@@ -18,6 +18,7 @@ from typing import Optional
 
 from ...records import FridgeStore, FridgeItem
 from ...config import FOOD_ALIAS, FOOD_DATABASE
+from ..security import get_auth_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ class RecipeConfirmRequest(BaseModel):
 
 
 def _user_id(req: Request) -> str:
-    return req.headers.get("X-User-Id", "anonymous")
+    return get_auth_user_id(req)
 
 
 # ─── 食材 CRUD ───

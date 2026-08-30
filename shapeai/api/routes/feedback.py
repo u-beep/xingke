@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from ...records import FeedbackStore, MessageFeedback
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/feedback", tags=["消息反馈"])
 
@@ -20,7 +21,7 @@ class MessageFeedbackRequest(BaseModel):
 @router.post("/message", summary="提交消息反馈")
 async def submit_feedback(request: MessageFeedbackRequest, req: Request):
     """提交对 AI 消息的反馈。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = FeedbackStore()
     feedback = MessageFeedback(
         user_id=user_id,

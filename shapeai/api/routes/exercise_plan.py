@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from ...records import ExercisePlanStore, ExercisePlanItem, EXERCISE_MET
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/exercise-plan", tags=["运动计划"])
 
@@ -20,7 +21,7 @@ class PlanItemRequest(BaseModel):
 @router.post("/add", summary="添加运动计划项")
 async def add_plan_item(request: PlanItemRequest, req: Request):
     """添加一项运动到今日计划。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = ExercisePlanStore()
     from datetime import datetime
     plan_date = request.plan_date or datetime.now().strftime("%Y-%m-%d")
@@ -44,6 +45,7 @@ async def add_plan_item(request: PlanItemRequest, req: Request):
 @router.get("/today", summary="获取今日运动计划")
 async def get_today_plan(req: Request, user_id: str = "anonymous"):
     """获取今日运动计划及统计。"""
+    user_id = get_auth_user_id(req, user_id)
     store = ExercisePlanStore()
     summary = store.get_summary(user_id)
     return summary
@@ -52,6 +54,7 @@ async def get_today_plan(req: Request, user_id: str = "anonymous"):
 @router.get("/by-date", summary="按日期获取运动计划")
 async def get_plan_by_date(req: Request, user_id: str = "anonymous", date: str = None):
     """按日期获取运动计划。"""
+    user_id = get_auth_user_id(req, user_id)
     store = ExercisePlanStore()
     summary = store.get_summary(user_id, date)
     return summary
@@ -68,6 +71,7 @@ async def delete_plan_item(item_id: int, req: Request):
 @router.delete("/clear-today", summary="清空今日运动计划")
 async def clear_today_plan(req: Request, user_id: str = "anonymous"):
     """清空今日所有运动计划。"""
+    user_id = get_auth_user_id(req, user_id)
     store = ExercisePlanStore()
     store.clear_today(user_id)
     return {"success": True}

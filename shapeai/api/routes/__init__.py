@@ -1,5 +1,6 @@
 """API 路由包。"""
 
+from .auth import router as auth_router
 from .chat import router as chat_router
 from .tools import router as tools_router
 from .knowledge import router as knowledge_router
@@ -19,6 +20,7 @@ from .takeout import router as takeout_router
 from .fridge import router as fridge_router
 
 __all__ = [
+    "auth_router",
     "chat_router",
     "image_router",
     "knowledge_router",

@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import date
 
 from ...records import ExerciseStore, ExerciseRecord
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/exercise", tags=["运动记录"])
 
@@ -24,7 +25,7 @@ class ExerciseRecordRequest(BaseModel):
 @router.post("/record", summary="记录运动")
 async def record_exercise(request: ExerciseRecordRequest, req: Request):
     """记录用户运动。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = ExerciseStore()
     scheduled = None
     if request.scheduled_date:
@@ -50,7 +51,7 @@ async def record_exercise(request: ExerciseRecordRequest, req: Request):
 @router.get("/today", summary="获取今日运动")
 async def get_today_exercise(req: Request):
     """获取用户今日运动记录。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = ExerciseStore()
     records = store.get_today_records(user_id)
     return {
@@ -62,7 +63,7 @@ async def get_today_exercise(req: Request):
 @router.get("/week", summary="获取本周运动")
 async def get_week_exercise(req: Request):
     """获取用户本周运动记录及统计。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = ExerciseStore()
     records = store.get_week_records(user_id)
     summary = store.get_week_summary(user_id)
@@ -79,7 +80,7 @@ async def get_exercise_history(
     limit: int = 200,
 ):
     """查询用户运动历史。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = ExerciseStore()
     records = store.get_history(user_id, days=days, limit=limit)
     return {

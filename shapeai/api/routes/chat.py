@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from ..models import ChatRequest, ChatResponse, SessionListResponse
+from ..security import get_auth_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ async def chat_send(request: ChatRequest, req: Request):
     app_state = req.app.state
     agent = app_state.create_agent(
         session_id=request.session_id,
-        user_id=request.user_id,
+        user_id=get_auth_user_id(req, request.user_id),
         user_profile=request.user_profile,
     )
     # 立即将用户消息写入会话历史（持久化）
@@ -99,7 +100,7 @@ async def chat_ask(request: ChatRequest, req: Request):
     app_state = req.app.state
     agent = app_state.create_agent(
         session_id=request.session_id,
-        user_id=request.user_id,
+        user_id=get_auth_user_id(req, request.user_id),
         user_profile=request.user_profile,
     )
     # 如果用户消息还没入库（没有通过 /send 提交），先写入
@@ -113,7 +114,7 @@ async def chat_ask(request: ChatRequest, req: Request):
     return ChatResponse(
         session_id=agent.session["id"],
         response=response,
-        user_id=request.user_id,
+        user_id=get_auth_user_id(req, request.user_id),
     )
 
 
@@ -128,7 +129,7 @@ async def chat_stream(request: ChatRequest, req: Request):
     app_state = req.app.state
     agent = app_state.create_agent(
         session_id=request.session_id,
-        user_id=request.user_id,
+        user_id=get_auth_user_id(req, request.user_id),
         user_profile=request.user_profile,
     )
 
@@ -167,6 +168,7 @@ async def chat_stream(request: ChatRequest, req: Request):
 @router.get("/sessions", response_model=SessionListResponse, summary="查询会话列表")
 async def list_sessions(req: Request, user_id: str = None):
     """查询会话列表。"""
+    user_id = get_auth_user_id(req, user_id)
     sessions = req.app.state.session_store.list_sessions(user_id)
     return SessionListResponse(sessions=sessions)
 
@@ -179,6 +181,7 @@ async def get_today_session(req: Request, user_id: str = "anonymous"):
     如果今天还没有会话，创建新会话并返回。
     前端刷新页面时调用此接口，可以恢复当天对话。
     """
+    user_id = get_auth_user_id(req, user_id)
     session = req.app.state.session_store.get_or_create_today(user_id)
     return {
         "session_id": session["id"],
@@ -197,9 +200,10 @@ async def list_sessions_by_date(
     """按日期查询会话历史（返回合并后的完整消息列表，与 /chat/today 格式一致）。
 
     Args:
-        user_id: 用户ID
+        user_id: 用户ID（登录态优先，参数仅作未鉴权回退）
         date: 日期字符串 YYYY-MM-DD，不传默认今天
     """
+    user_id = get_auth_user_id(req, user_id)
     session = req.app.state.session_store.get_by_date(user_id, date or "")
     return {
         "session_id": session["id"],
@@ -252,7 +256,7 @@ async def chat_start(request: ChatRequest, req: Request):
     app_state = req.app.state
     agent = app_state.create_agent(
         session_id=request.session_id,
-        user_id=request.user_id,
+        user_id=get_auth_user_id(req, request.user_id),
         user_profile=request.user_profile,
     )
     # 立即将用户消息写入会话历史（持久化，刷新不丢失）

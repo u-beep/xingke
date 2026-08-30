@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from ...records import WorkoutStore, ExercisePlanStore, ExercisePlanItem
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/workout", tags=["运动方案模板"])
 
@@ -56,7 +57,7 @@ async def search_exercises(keyword: str = ""):
 @router.post("/templates", summary="创建运动方案模板")
 async def create_template(request: CreateTemplateRequest, req: Request):
     """创建自定义运动方案模板。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = WorkoutStore()
     template_id = store.create_template(
         user_id=user_id,
@@ -73,6 +74,7 @@ async def create_template(request: CreateTemplateRequest, req: Request):
 @router.get("/templates", summary="获取运动方案模板列表")
 async def list_templates(req: Request, user_id: str = "anonymous"):
     """获取用户的所有运动方案模板。"""
+    user_id = get_auth_user_id(req, user_id)
     store = WorkoutStore()
     templates = store.list_templates(user_id)
     return {
@@ -102,7 +104,7 @@ async def delete_template(template_id: int):
 @router.post("/templates/apply", summary="应用模板到当天计划")
 async def apply_template(request: ApplyTemplateRequest, req: Request):
     """将模板中的运动项添加到当天运动计划。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = WorkoutStore()
     plan_store = ExercisePlanStore()
 

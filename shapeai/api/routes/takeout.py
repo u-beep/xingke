@@ -1,13 +1,16 @@
 """外卖选购下单 API 路由。
 
 提供：
-  GET    /takeout/dishes          获取外卖菜品菜单
-  GET    /takeout/dishes/{dish_id} 获取菜品详情
-  GET    /takeout/categories      获取菜品分类
-  POST   /takeout/orders          下单（带 include_in_stats 勾选）
-  GET    /takeout/orders/today    获取今日订单
-  GET    /takeout/orders/history   查询订单历史
-  GET    /takeout/orders/summary  获取今日订单汇总
+  GET    /takeout/shops             获取店家列表（可按品类过滤）
+  GET    /takeout/shop-categories   获取店家品类列表
+  GET    /takeout/shops/{shop_name} 获取店家详情+菜单（按店内分类分组）
+  GET    /takeout/dishes            获取外卖菜品菜单（可按店家/分类过滤）
+  GET    /takeout/dishes/{dish_id}  获取菜品详情
+  GET    /takeout/categories        获取菜品分类
+  POST   /takeout/orders            下单（带 include_in_stats 勾选）
+  GET    /takeout/orders/today      获取今日订单
+  GET    /takeout/orders/history    查询订单历史
+  GET    /takeout/orders/summary    获取今日订单汇总
   DELETE /takeout/orders/{order_id} 取消订单
 
 下单时会自动同步写入当日饮食记录（source='order'），由
@@ -19,6 +22,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from ...records import TakeoutStore
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/takeout", tags=["外卖选购"])
 
@@ -37,13 +41,56 @@ class PlaceOrderRequest(BaseModel):
     notes: Optional[str] = Field(None, description="订单备注")
 
 
+# ─── 店家接口 ───
+
+@router.get("/shops", summary="获取店家列表")
+async def list_shops(category: Optional[str] = None):
+    """获取所有外卖店家（仿美团店列），可按品类过滤。"""
+    store = TakeoutStore()
+    shops = store.list_shops(category=category)
+    return {
+        "shops": [s.to_dict() for s in shops],
+        "count": len(shops),
+    }
+
+
+@router.get("/shop-categories", summary="获取店家品类列表")
+async def list_shop_categories():
+    """获取店家品类标签（炸鸡汉堡/中式快餐/咖啡茶饮/...）。"""
+    store = TakeoutStore()
+    return {"categories": store.list_shop_categories()}
+
+
+@router.get("/shops/{shop_name}", summary="获取店家详情与菜单")
+async def get_shop_detail(shop_name: str):
+    """获取单个店家详情 + 按店内分类分组的菜单。"""
+    store = TakeoutStore()
+    shop = store.get_shop(shop_name)
+    if not shop:
+        return {"success": False, "message": "店家不存在"}
+    dishes = store.list_dishes(shop_name=shop_name, only_available=True)
+    # 按店内分类分组（仿美团点餐页）
+    groups: dict = {}
+    for d in dishes:
+        groups.setdefault(d.category or "其他", []).append(d.to_dict())
+    return {
+        **shop.to_dict(),
+        "menu_groups": [
+            {"category": cat, "dishes": items} for cat, items in groups.items()
+        ],
+    }
+
+
 # ─── 菜品接口 ───
 
 @router.get("/dishes", summary="获取外卖菜品菜单")
-async def list_dishes(category: Optional[str] = None):
-    """获取所有可用的外卖菜品，可按分类过滤。"""
+async def list_dishes(
+    category: Optional[str] = None,
+    shop_name: Optional[str] = None,
+):
+    """获取所有可用的外卖菜品，可按店家/店内分类过滤。"""
     store = TakeoutStore()
-    dishes = store.list_dishes(category=category, only_available=True)
+    dishes = store.list_dishes(category=category, only_available=True, shop_name=shop_name)
     return {
         "dishes": [d.to_dict() for d in dishes],
         "count": len(dishes),
@@ -79,7 +126,7 @@ async def place_order(request: PlaceOrderRequest, req: Request):
     - 若 ``include_in_stats=False``，外卖仍写入饮食记录（保留可见），
       但不计入当日热量与蛋白质统计
     """
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = TakeoutStore()
     order_id = store.place_order(
         user_id=user_id,
@@ -110,7 +157,7 @@ async def place_order(request: PlaceOrderRequest, req: Request):
 @router.get("/orders/today", summary="获取今日外卖订单")
 async def get_today_orders(req: Request):
     """获取用户今日所有外卖订单。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = TakeoutStore()
     orders = store.get_today_orders(user_id)
     summary = store.get_today_summary(user_id)
@@ -124,7 +171,7 @@ async def get_today_orders(req: Request):
 @router.get("/orders/history", summary="查询外卖订单历史")
 async def get_history_orders(req: Request, days: int = 30, limit: int = 200):
     """查询用户外卖订单历史。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = TakeoutStore()
     orders = store.get_history_orders(user_id, days=days, limit=limit)
     return {
@@ -137,7 +184,7 @@ async def get_history_orders(req: Request, days: int = 30, limit: int = 200):
 @router.get("/orders/summary", summary="今日外卖汇总")
 async def get_orders_summary(req: Request):
     """获取用户今日外卖订单汇总（含计入统计 vs 总量）。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = TakeoutStore()
     return store.get_today_summary(user_id)
 
@@ -145,7 +192,7 @@ async def get_orders_summary(req: Request):
 @router.delete("/orders/{order_id}", summary="取消外卖订单")
 async def cancel_order(order_id: int, req: Request):
     """取消外卖订单（同步删除关联饮食记录）。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = TakeoutStore()
     cancelled = store.cancel_order(user_id, order_id)
     summary = store.get_today_summary(user_id) if cancelled else None

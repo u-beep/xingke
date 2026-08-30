@@ -1,0 +1,180 @@
+/* ============================================
+   登录/注册页 — 美团黄品牌视觉
+   ============================================ */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(1200px 600px at 20% -10%, var(--mt-50) 0%, transparent 60%),
+    radial-gradient(1000px 500px at 90% 110%, #fff7e0 0%, transparent 55%),
+    var(--bg-page);
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 20px;
+  box-shadow: 0 12px 40px rgba(43, 36, 16, 0.08);
+  padding: 36px 32px 28px;
+}
+
+/* —— 品牌区 —— */
+.login-brand {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.login-brand__logo {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  margin-bottom: 8px;
+}
+
+.login-brand__title {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.login-brand__subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* —— Tab 切换 —— */
+.login-tabs {
+  display: flex;
+  background: var(--bg-page);
+  border-radius: 12px;
+  padding: 4px;
+  margin-bottom: 22px;
+}
+
+.login-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 9px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.login-tab--active {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(43, 36, 16, 0.1);
+}
+
+/* —— 表单 —— */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-field__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.login-field__input {
+  height: 44px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 0 14px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-card);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.login-field__input:focus {
+  border-color: var(--mt-400);
+  box-shadow: 0 0 0 3px var(--mt-100);
+}
+
+.login-field__input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* —— 错误提示 —— */
+.login-error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+/* —— 提交按钮 —— */
+.login-submit {
+  height: 46px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--mt-400), var(--mt-500));
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+  box-shadow: 0 6px 16px rgba(245, 168, 0, 0.35);
+}
+
+.login-submit:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.login-submit:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* —— 底部切换 —— */
+.login-tip {
+  margin: 20px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.login-switch {
+  border: none;
+  background: transparent;
+  color: var(--mt-600);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: 4px;
+  padding: 0;
+}
+
+.login-switch:hover {
+  text-decoration: underline;
+}

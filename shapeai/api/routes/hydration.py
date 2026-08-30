@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from ...records import HydrationStore, HydrationRecord
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/hydration", tags=["饮水记录"])
 
@@ -19,7 +20,7 @@ class HydrationRecordRequest(BaseModel):
 @router.post("/record", summary="记录饮水")
 async def record_hydration(request: HydrationRecordRequest, req: Request):
     """记录用户饮水。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = HydrationStore()
     record = HydrationRecord(
         user_id=user_id,
@@ -38,7 +39,7 @@ async def record_hydration(request: HydrationRecordRequest, req: Request):
 @router.get("/today", summary="获取今日饮水")
 async def get_today_hydration(req: Request):
     """获取用户今日饮水记录及统计。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = HydrationStore()
     records = store.get_today_records(user_id)
     summary = store.get_today_summary(user_id)
@@ -53,9 +54,10 @@ async def get_hydration_summary(req: Request, user_id: str = "anonymous", date: 
     """获取指定日期的饮水统计。
 
     Args:
-        user_id: 用户ID
+        user_id: 用户ID（登录态优先，参数仅作未鉴权回退）
         date: 日期 YYYY-MM-DD，不传默认今天
     """
+    user_id = get_auth_user_id(req, user_id)
     store = HydrationStore()
     if date:
         summary = store.get_summary_by_date(user_id, date)
@@ -75,8 +77,8 @@ class HydrationConfirmRequest(BaseModel):
 @router.post("/confirm", summary="确认计入今日饮水总量")
 async def confirm_hydration(request: HydrationConfirmRequest, req: Request):
     """用户确认后，将提取的饮水量写入今日饮水记录。"""
-    # 优先使用 body 中的 user_id，回退到 X-User-Id 头，最后回退到 anonymous
-    user_id = request.user_id or req.headers.get("X-User-Id", "anonymous")
+    # 登录态优先（Token 用户），回退到 body/X-User-Id/anonymous
+    user_id = get_auth_user_id(req, request.user_id)
     store = HydrationStore()
     record = HydrationRecord(
         user_id=user_id,
@@ -104,7 +106,7 @@ async def get_hydration_history(
     limit: int = 200,
 ):
     """查询用户饮水历史。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = HydrationStore()
     records = store.get_history(user_id, days=days, limit=limit)
     return {

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect, type ReactNode } from 'react'
 import { chatApi, toolsApi, visionApi, fileToBase64, dietApi, waterApi, type WaterSummary } from '../services/api'
+import { getCurrentUserId } from '../services/authStore'
 
 // —— 类型 ——
 
@@ -47,7 +48,8 @@ interface CalorieSummary {
 
 const ChatContext = createContext<ChatContextValue | null>(null)
 
-const USER_ID = 'user_web_001'
+// 登录用户的业务 ID（= 用户名），数据按此隔离
+const USER_ID = getCurrentUserId()
 
 /** 过滤掉自动问候消息及其对应的 AI 回复 */
 function filterGreetingMessages(history: any[]): any[] {

@@ -1,4 +1,6 @@
-import { Bell, HelpCircle, ChevronDown } from 'lucide-react'
+import { Bell, HelpCircle, ChevronDown, LogOut } from 'lucide-react'
+import { authApi } from '../../services/auth'
+import { getAuthUser, clearAuth } from '../../services/authStore'
 import './TopBar.css'
 
 interface TopBarProps {
@@ -7,6 +9,19 @@ interface TopBarProps {
 }
 
 export default function TopBar({ title, subtitle }: TopBarProps) {
+  const user = getAuthUser()
+  const displayName = user?.nickname || user?.username || '未登录'
+
+  const handleLogout = async () => {
+    try {
+      await authApi.logout()
+    } catch {
+      // 服务端吊销失败也无妨，本地清理后跳转
+    }
+    clearAuth()
+    window.location.href = '/login'
+  }
+
   return (
     <header className="topbar">
       <div className="topbar__left">
@@ -24,13 +39,17 @@ export default function TopBar({ title, subtitle }: TopBarProps) {
         <div className="topbar__user-menu">
           <div className="topbar__user-avatar">
             <img
-              src="https://api.dicebear.com/7.x/avataaars/svg?seed=xingke"
+              src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(user?.username || 'xingke')}`}
               alt="头像"
             />
           </div>
-          <span className="topbar__user-name">陈晓东</span>
+          <span className="topbar__user-name">{displayName}</span>
           <ChevronDown size={15} className="topbar__dropdown-icon" />
         </div>
+        <button className="topbar__logout-btn" onClick={handleLogout} title="退出登录">
+          <LogOut size={16} />
+          <span>退出</span>
+        </button>
       </div>
     </header>
   )

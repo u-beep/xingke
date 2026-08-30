@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from ...records import DietStore, DietRecord
+from ..security import get_auth_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class DietRecordRequest(BaseModel):
 @router.post("/record", summary="记录饮食")
 async def record_diet(request: DietRecordRequest, req: Request):
     """记录用户饮食。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = DietStore()
     record = DietRecord(
         user_id=user_id,
@@ -76,7 +77,7 @@ async def record_diet(request: DietRecordRequest, req: Request):
 @router.get("/today", summary="获取今日饮食")
 async def get_today_diet(req: Request):
     """获取用户今日饮食记录及统计。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = DietStore()
     records = store.get_today_records(user_id)
     summary = _inject_real_budget(store.get_today_summary(user_id), user_id)
@@ -91,9 +92,10 @@ async def get_diet_summary(req: Request, user_id: str = "anonymous", date: str =
     """获取指定日期的饮食统计。
 
     Args:
-        user_id: 用户ID
+        user_id: 用户ID（登录态优先，参数仅作未鉴权回退）
         date: 日期 YYYY-MM-DD，不传默认今天
     """
+    user_id = get_auth_user_id(req, user_id)
     store = DietStore()
     if date:
         summary = _inject_real_budget(store.get_summary_by_date(user_id, date), user_id)
@@ -111,8 +113,8 @@ class DietConfirmRequest(BaseModel):
 @router.post("/confirm", summary="确认计入今日热量统计")
 async def confirm_diet(request: DietConfirmRequest, req: Request):
     """用户确认后，将提取的食物数据写入今日饮食记录。"""
-    # 优先使用 body 中的 user_id，回退到 X-User-Id 头，最后回退到 anonymous
-    user_id = request.user_id or req.headers.get("X-User-Id", "anonymous")
+    # 登录态优先（Token 用户），回退到 body/X-User-Id/anonymous
+    user_id = get_auth_user_id(req, request.user_id)
     store = DietStore()
     saved_count = 0
     total_calories = 0
@@ -145,7 +147,7 @@ async def get_diet_history(
     limit: int = 200,
 ):
     """查询用户饮食历史。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     store = DietStore()
     records = store.get_history(user_id, days=days, limit=limit)
     return {
@@ -167,7 +169,7 @@ async def get_daily_diet(req: Request, date: Optional[str] = None):
     统计口径：diet_records 仅汇总 include_in_stats=TRUE 的记录，
     冰箱餐次全部计入。
     """
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
     from datetime import datetime as _dt
 
     # 日期参数校验（默认今天）
@@ -257,6 +259,7 @@ async def get_diet_recommendation(req: Request, user_id: str = "anonymous"):
     4. KnowledgeBase（RAG）检索营养知识（高蛋白/饱腹/低卡搭配）
     5. ModelGateway 调 LLM，结合剩余热量约束 + 菜品 + 知识 + 偏好生成推荐
     """
+    user_id = get_auth_user_id(req, user_id)
     app_state = req.app.state
 
     # ① 剩余热量

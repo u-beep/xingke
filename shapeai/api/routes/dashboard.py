@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request
 
 from ...records import WeightStore, DietStore, ExerciseStore, GoalStore
 from ...user_profile import ProfileStore
+from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/dashboard", tags=["仪表盘"])
 
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/dashboard", tags=["仪表盘"])
 @router.get("/metrics", summary="核心指标聚合")
 async def get_dashboard_metrics(req: Request):
     """获取仪表盘核心指标（体重、饮食、运动、目标进度）。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
 
     weight_store = WeightStore()
     diet_store = DietStore()
@@ -70,7 +71,7 @@ async def get_dashboard_metrics(req: Request):
 @router.get("/weekly-summary", summary="周报数据")
 async def get_weekly_summary(req: Request):
     """获取本周数据摘要（平均热量缺口、运动次数、体重变化、打卡率）。"""
-    user_id = req.headers.get("X-User-Id", "anonymous")
+    user_id = get_auth_user_id(req)
 
     weight_store = WeightStore()
     diet_store = DietStore()

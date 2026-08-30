@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Flame, Loader2, X, Pencil, RefreshCw, ChevronLeft, ChevronRight, ShoppingCart, MessageSquare, Refrigerator } from 'lucide-react'
 import { dietApi, profileApi, type DailyDietRecord } from '../../services/api'
+import { getCurrentUserId } from '../../services/authStore'
 import DatePicker from '../../components/DatePicker/DatePicker'
 import './DietRecord.css'
 
-const USER_ID = 'user_web_001'
+const USER_ID = getCurrentUserId()
 
 /** 今天日期 YYYY-MM-DD */
 function todayStr(): string {

@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 # 同步表配置: (pg_table, mysql_table, columns, has_created_at)
 SYNC_TABLES = [
     {
+        "pg_table": "users",
+        "mysql_table": "users",
+        "columns": ["id", "username", "password_hash", "nickname", "created_at", "updated_at", "last_login_at"],
+        "pk": "id",
+        "has_created_at": True,
+    },
+    {
         "pg_table": "sessions",
         "mysql_table": "sessions",
         "columns": ["id", "user_id", "created_at", "memory", "user_profile"],

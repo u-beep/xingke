@@ -85,6 +85,12 @@ API_HOST = os.environ.get("SHAPEAI_HOST", "0.0.0.0")
 API_PORT = int(os.environ.get("SHAPEAI_PORT", "28900"))
 API_KEY = os.environ.get("SHAPEAI_API_KEY", "shapeai-dev-key")
 
+# ─── 用户认证配置 ───
+# 是否强制登录（开启后 /api/v1/* 除 /api/v1/auth/* 外均需 Bearer Token）
+AUTH_ENABLED = os.environ.get("SHAPEAI_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
+# 会话令牌有效期（天），支持滑动续期
+AUTH_TOKEN_EXPIRE_DAYS = int(os.environ.get("SHAPEAI_TOKEN_EXPIRE_DAYS", "7"))
+
 # ─── 安全配置 ───
 # 医疗边界：禁止出现的关键词
 MEDICAL_FORBIDDEN_KEYWORDS = [

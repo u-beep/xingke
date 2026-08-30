@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Dumbbell, Clock, Flame, Check, Play, ChevronRight, Loader2, RefreshCw } from 'lucide-react'
 import { toolsApi } from '../../services/api'
+import { getCurrentUserId } from '../../services/authStore'
 import './ExercisePlan.css'
 
 const typeColors: Record<string, string> = {
@@ -31,7 +32,7 @@ export default function ExercisePlan() {
         equipment: 'none',
         target_areas: '全身',
         goal: '减脂',
-        user_id: 'user_web_001',
+        user_id: getCurrentUserId(),
       })
       setPlan(result)
     } catch (err) {

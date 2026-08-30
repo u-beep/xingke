@@ -10,7 +10,7 @@ router = APIRouter(prefix="/tools", tags=["工具"])
 @router.get("/list", summary="列出所有可用工具")
 async def list_tools(req: Request):
     """列出所有可用工具及其规格。"""
-    from ..tools.executor import TOOL_SPECS
+    from ...tools.executor import TOOL_SPECS
     return {"tools": TOOL_SPECS}
 
 

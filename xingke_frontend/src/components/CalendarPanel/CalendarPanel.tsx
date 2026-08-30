@@ -2,9 +2,10 @@ import { useState, useMemo, useEffect } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { chatApi } from '../../services/api'
 import { useChat } from '../../store/ChatContext'
+import { getCurrentUserId } from '../../services/authStore'
 import './CalendarPanel.css'
 
-const USER_ID = 'user_web_001'
+const USER_ID = getCurrentUserId()
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
 

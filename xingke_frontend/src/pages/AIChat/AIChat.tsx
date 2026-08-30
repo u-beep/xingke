@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { getCurrentUserId } from '../../services/authStore'
 import {
   Flag,
   Trash2,
@@ -115,7 +116,7 @@ export default function AIChat() {
     }
     loadExerciseData()
     // 加载模板列表
-    workoutApi.listTemplates('user_web_001').then(res => setTemplates(res.templates || [])).catch(() => {})
+    workoutApi.listTemplates(getCurrentUserId()).then(res => setTemplates(res.templates || [])).catch(() => {})
   }, [])
 
   // 加载今日运动计划
