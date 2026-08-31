@@ -143,6 +143,16 @@ class ExercisePlanStore:
         """获取今日运动计划。"""
         return self.get_items_by_date(user_id, datetime.now().strftime("%Y-%m-%d"))
 
+    @staticmethod
+    def _row_to_item(row) -> ExercisePlanItem:
+        """将数据库行转换为运动计划项。"""
+        return ExercisePlanItem(
+            id=row[0], user_id=row[1], plan_date=row[2].isoformat() if row[2] else "",
+            exercise_type=row[3], exercise_name=row[4],
+            duration_min=row[5], calories_burned=row[6], completed=row[7],
+            created_at=row[8],
+        )
+
     def get_items_by_date(self, user_id: str, date_str: str) -> List[ExercisePlanItem]:
         """按日期获取运动计划。"""
         try:
@@ -154,22 +164,67 @@ class ExercisePlanStore:
                     WHERE user_id = %s AND plan_date = %s
                     ORDER BY created_at ASC
                 """, (user_id, date_str))
-                rows = cur.fetchall()
-                return [ExercisePlanItem(
-                    id=r[0], user_id=r[1], plan_date=r[2].isoformat() if r[2] else "",
-                    exercise_type=r[3], exercise_name=r[4],
-                    duration_min=r[5], calories_burned=r[6], completed=r[7],
-                    created_at=r[8],
-                ) for r in rows]
+                return [self._row_to_item(row) for row in cur.fetchall()]
         except Exception as exc:
             logger.error("查询运动计划失败: %s", exc)
             return []
 
-    def delete_item(self, item_id: int) -> bool:
-        """删除运动计划项。"""
+    def complete_item(self, item_id: int, user_id: str) -> tuple[Optional[ExercisePlanItem], bool, Optional[int]]:
+        """原子地完成计划项并写入实际运动消耗记录。
+
+        返回计划项、本次是否首次完成以及新建的运动记录 ID。两次写入使用同一
+        事务，避免计划状态与实际热量消耗记录不一致或重复计入。
+        """
         try:
             with pg_cursor(commit=True) as cur:
-                cur.execute("DELETE FROM exercise_plans WHERE id = %s", (item_id,))
+                cur.execute("""
+                    UPDATE exercise_plans
+                    SET completed = TRUE
+                    WHERE id = %s AND user_id = %s AND completed = FALSE
+                    RETURNING id, user_id, plan_date, exercise_type, exercise_name,
+                              duration_min, calories_burned, completed, created_at
+                """, (item_id, user_id))
+                row = cur.fetchone()
+                if row:
+                    item = self._row_to_item(row)
+                    cur.execute("""
+                        INSERT INTO exercise_records
+                            (user_id, exercise_name, exercise_type, duration_min, calories_burned,
+                             completed, scheduled_date, notes)
+                        VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s)
+                        RETURNING id
+                    """, (
+                        item.user_id,
+                        item.exercise_name,
+                        item.exercise_type,
+                        item.duration_min,
+                        item.calories_burned,
+                        item.plan_date,
+                        f"由运动计划 #{item.id} 确认完成",
+                    ))
+                    record = cur.fetchone()
+                    return item, True, record[0] if record else None
+
+                cur.execute("""
+                    SELECT id, user_id, plan_date, exercise_type, exercise_name,
+                           duration_min, calories_burned, completed, created_at
+                    FROM exercise_plans
+                    WHERE id = %s AND user_id = %s
+                """, (item_id, user_id))
+                row = cur.fetchone()
+                return (self._row_to_item(row), False, None) if row else (None, False, None)
+        except Exception as exc:
+            logger.error("完成运动计划失败: %s", exc)
+            return None, False, None
+
+    def delete_item(self, item_id: int, user_id: str) -> bool:
+        """删除指定用户的一项运动计划。"""
+        try:
+            with pg_cursor(commit=True) as cur:
+                cur.execute(
+                    "DELETE FROM exercise_plans WHERE id = %s AND user_id = %s",
+                    (item_id, user_id),
+                )
                 return cur.rowcount > 0
         except Exception as exc:
             logger.error("删除运动计划失败: %s", exc)
@@ -190,11 +245,17 @@ class ExercisePlanStore:
         if not date_str:
             date_str = datetime.now().strftime("%Y-%m-%d")
         items = self.get_items_by_date(user_id, date_str)
-        total_calories = sum(i.calories_burned or 0 for i in items)
-        total_duration = sum(i.duration_min for i in items)
+        completed_items = [item for item in items if item.completed]
+        total_calories = sum(item.calories_burned or 0 for item in completed_items)
+        total_duration = sum(item.duration_min for item in completed_items)
         return {
+            # 仅实际完成的运动才计入热量消耗和时长。
             "total_calories": round(total_calories, 1),
             "total_duration": total_duration,
+            "completed_count": len(completed_items),
+            # 计划值单独返回，供前端展示但不参与热量缺口计算。
+            "planned_calories": round(sum(item.calories_burned or 0 for item in items), 1),
+            "planned_duration": sum(item.duration_min for item in items),
             "item_count": len(items),
-            "items": [i.to_dict() for i in items],
+            "items": [item.to_dict() for item in items],
         }

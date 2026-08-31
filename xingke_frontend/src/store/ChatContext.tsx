@@ -34,6 +34,8 @@ interface ChatContextValue {
   dismissDiet: (msgId: string) => void
   confirmWater: (msgId: string, amount_ml: number, drink_type?: string, notes?: string) => Promise<void>
   dismissWater: (msgId: string) => void
+  /** 手动终止当前回复生成（轮询/请求/打字机动画均会中断） */
+  stopGeneration: () => void
 }
 
 interface CalorieSummary {
@@ -110,6 +112,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const loadedTodayRef = useRef(false)
   // 当天会话加载 Promise
   const loadTodayPromiseRef = useRef<Promise<boolean> | null>(null)
+  // 停止生成：当前请求的 AbortController、后台任务 ID、用户主动停止标记
+  const stopControllerRef = useRef<AbortController | null>(null)
+  const activeTaskIdRef = useRef<string | null>(null)
+  const stopRequestedRef = useRef(false)
 
   /** 初始化：拉取当天会话历史，返回是否有历史消息 */
   const loadTodaySession = useCallback((): Promise<boolean> => {
@@ -205,6 +211,36 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // 不做任何事，保留函数签名兼容
   }, [])
 
+  /** 可中断的 sleep：AbortSignal 触发时立即 reject，用于及时响应"停止生成" */
+  const abortableSleep = (ms: number, signal: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'))
+        return
+      }
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort)
+        resolve()
+      }, ms)
+      const onAbort = () => {
+        clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      }
+      signal.addEventListener('abort', onAbort)
+    })
+
+  /** 手动终止当前回复生成（对话轮询、图片识别、食谱生成都可中断） */
+  const stopGeneration = useCallback(() => {
+    stopRequestedRef.current = true
+    stopControllerRef.current?.abort()
+    // 通知后端终止后台任务，poll 会立即返回 cancelled
+    const taskId = activeTaskIdRef.current
+    if (taskId) {
+      chatApi.cancel(taskId).catch(() => { /* 静默失败 */ })
+      activeTaskIdRef.current = null
+    }
+  }, [])
+
   /** 核心：先入库用户消息，再调用流式对话API */
   const sendChatMessage = useCallback(async (text: string) => {
     // 如果正在处理中，禁止发送新消息
@@ -235,7 +271,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // 然后定时 GET /chat/poll 取结果，避免 SSE 长连接在后端慢响应时被超时 abort。
     let accumulated = ''
     let currentSessionId = sessionId
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    // 本次生成使用的 AbortController，供"停止生成"中断轮询与打字机动画
+    const controller = new AbortController()
+    stopControllerRef.current = controller
+    stopRequestedRef.current = false
     try {
       // ① 发起异步对话（后端立即入库用户消息 + 启动后台线程跑 AgentLoop）
       const startResp = await chatApi.start({
@@ -244,23 +283,54 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         user_id: USER_ID,
       })
       const taskId = startResp.task_id
+      activeTaskIdRef.current = taskId
       if (startResp.session_id) {
         currentSessionId = startResp.session_id
         setSessionId(currentSessionId)
       }
 
-      // ② 轮询结果（间隔 1.5s，最多 120 次 = 180s，覆盖后端模型降级慢响应场景）
-      const POLL_INTERVAL_MS = 1500
+      // 后台提取结果拉取：主回复就绪后，提取可能仍在后台跑（合并提取器异步执行）。
+      // 非阻塞：与打字机动画并行轮询 /chat/extract，拿到结果后给 AI 消息附加“确认记录”卡片数据。
+      const fetchExtractResult = async () => {
+        const EXTRACT_MAX_POLLS = 24  // 500ms × 24 = 最多等 12s
+        for (let i = 0; i < EXTRACT_MAX_POLLS; i++) {
+          try {
+            await abortableSleep(500, controller.signal)
+            const ext = await chatApi.extract(taskId, controller.signal)
+            if (ext.status === 'ready') {
+              if (ext.diet_data && ext.diet_data.foods && ext.diet_data.foods.length > 0) {
+                setMessages((prev) => prev.map((m) => (m.id === aiId && !m.dietData ? { ...m, dietData: ext.diet_data } : m)))
+              }
+              if (ext.water_data && ext.water_data.amount_ml > 0) {
+                setMessages((prev) => prev.map((m) => (m.id === aiId && !m.waterData ? { ...m, waterData: ext.water_data } : m)))
+              }
+              return
+            }
+            if (ext.status === 'none') return  // 终结态：无提取或任务不存在
+            // pending：继续轮询
+          } catch {
+            return  // 请求失败或用户中止，静默退出
+          }
+        }
+      }
+
+      // ② 轮询结果（自适应间隔：前几次 300ms 快速探测，之后逐步退避到 1.5s 减少无效请求）
       const MAX_POLL_COUNT = 120
       let result = ''
       let pollError: string | null = null
       for (let i = 0; i < MAX_POLL_COUNT; i++) {
-        await sleep(POLL_INTERVAL_MS)
-        const pollResp = await chatApi.poll(taskId)
+        // 自适应轮询间隔：前 3 次 300ms，第 4~10 次 500ms，之后 1500ms
+        const pollInterval = i < 3 ? 300 : i < 10 ? 500 : 1500
+        await abortableSleep(pollInterval, controller.signal)
+        const pollResp = await chatApi.poll(taskId, controller.signal)
         if (pollResp.session_id) setSessionId(pollResp.session_id)
         if (pollResp.status === 'done') {
           result = pollResp.result || ''
           break
+        }
+        if (pollResp.status === 'cancelled') {
+          // 用户已终止（如另一处触发了 stop）
+          throw new DOMException('Aborted', 'AbortError')
         }
         if (pollResp.status === 'error' || pollResp.status === 'unknown') {
           pollError = pollResp.error || 'AI 服务异常，请稍后重试'
@@ -276,23 +346,38 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         accumulated = pollError
         setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: accumulated } : m)))
       } else {
-        // ③ 拿到完整 result 后，逐字动画显示（模拟流式打字机效果，UX 更自然）
-        const chunkSize = 3
+        // ③' 启动后台提取拉取（与打字机动画并行，不阻塞主流程）
+        fetchExtractResult()
+
+        // ③ 拿到完整 result 后，逐字动画显示（自适应速度：总时长≈0.8s，长回复不拖沓）
+        // 动态分片：限制总 tick 数 ≤ 40，长文本每次贴更多字
+        const MAX_TICKS = 40
+        const TICK_MS = 20
+        const chunkSize = Math.max(3, Math.ceil(result.length / MAX_TICKS))
         for (let i = 0; i < result.length; i += chunkSize) {
           accumulated += result.slice(i, i + chunkSize)
           setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: accumulated } : m)))
-          // 短暂延迟，让用户看到逐字显示；末尾段稍快避免拖沓
-          await sleep(i < result.length - chunkSize * 5 ? 25 : 12)
+          await abortableSleep(TICK_MS, controller.signal)
         }
         accumulated = result
       }
     } catch (err) {
-      console.error('[sendChatMessage] 轮询对话失败:', err)
-      accumulated = '抱歉，暂时无法连接到AI服务，请稍后再试。'
-      setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: accumulated } : m)))
+      if (controller.signal.aborted) {
+        // 用户手动终止：保留已显示的内容，空则给出提示
+        accumulated = accumulated || '（已停止生成）'
+        setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: accumulated } : m)))
+      } else {
+        console.error('[sendChatMessage] 轮询对话失败:', err)
+        accumulated = '抱歉，暂时无法连接到AI服务，请稍后再试。'
+        setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, content: accumulated } : m)))
+      }
+    } finally {
+      stopControllerRef.current = null
+      activeTaskIdRef.current = null
     }
 
-    // 解析 [DIET_DATA] 标记，提取食物数据供前端展示确认按钮
+    // 解析 [DIET_DATA] 标记（兼容旧数据：历史会话里可能仍带标记），
+    // 新对话的提取结果主要来自异步后台提取（上方 fetchExtractResult）
     let dietData: Message['dietData'] = null
     const dietMatch = accumulated.match(/\[DIET_DATA\](.+?)\[\/DIET_DATA\]/s)
     if (dietMatch) {
@@ -374,12 +459,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       timestamp: nowTime(),
     }])
 
+    // 支持用户"停止生成"中断识别请求
+    const controller = new AbortController()
+    stopControllerRef.current = controller
+    stopRequestedRef.current = false
+
     try {
       const base64 = await fileToBase64(file)
       const result = await visionApi.recognizeFood({
         image_base64: base64,
         user_id: USER_ID,
-      })
+      }, controller.signal)
       const text = typeof result === 'string'
         ? result
         : (result.content || result.response || JSON.stringify(result, null, 2))
@@ -390,13 +480,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         return [...updated]
       })
     } catch {
+      const aborted = controller.signal.aborted
       setMessages((prev) => {
         const updated = [...prev]
         const target = updated.find((m) => m.id === aiId)
-        if (target) target.content = '抱歉，图片识别服务暂时不可用，请稍后再试或使用文字描述食物。'
+        if (target) target.content = aborted ? '（已停止识别）' : '抱歉，图片识别服务暂时不可用，请稍后再试或使用文字描述食物。'
         return [...updated]
       })
     } finally {
+      stopControllerRef.current = null
       setTyping(false)
       setLoading(false)
     }
@@ -416,6 +508,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       timestamp: nowTime(),
     }])
 
+    // 支持用户"停止生成"中断食谱生成请求
+    const controller = new AbortController()
+    stopControllerRef.current = controller
+    stopRequestedRef.current = false
+
     try {
       const result = await toolsApi.generateDietPlan({
         gender: 'male',
@@ -427,7 +524,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         meals_per_day: 3,
         days: days,
         user_id: USER_ID,
-      })
+      }, controller.signal)
       const text = typeof result === 'string'
         ? result
         : (result.content || result.response || JSON.stringify(result, null, 2))
@@ -441,13 +538,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         return [...updated]
       })
     } catch {
+      const aborted = controller.signal.aborted
       setMessages((prev) => {
         const updated = [...prev]
         const target = updated.find((m) => m.id === aiId)
-        if (target) target.content = '食谱生成服务暂时不可用，请稍后再试。'
+        if (target) target.content = aborted ? '（已停止生成）' : '食谱生成服务暂时不可用，请稍后再试。'
         return [...updated]
       })
     } finally {
+      stopControllerRef.current = null
       setTyping(false)
       setLoading(false)
     }
@@ -620,6 +719,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         dismissDiet,
         confirmWater,
         dismissWater,
+        stopGeneration,
       }}>
       {children}
     </ChatContext.Provider>

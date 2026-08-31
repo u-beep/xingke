@@ -61,19 +61,47 @@
   border: 1.5px solid var(--bg-card);
 }
 
+.topbar__user-wrapper {
+  position: relative;
+  margin-left: 4px;
+}
+
 .topbar__user-menu {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 10px 4px 4px;
+  border: 0;
   border-radius: var(--radius-full);
+  background: transparent;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
   transition: background var(--transition);
-  margin-left: 4px;
 }
 
-.topbar__user-menu:hover {
+.topbar__user-menu:hover,
+.topbar__user-menu--open {
   background: var(--bg-hover);
+}
+
+.topbar__user-menu:focus-visible,
+.topbar__logout-btn:focus-visible {
+  outline: 2px solid var(--mint-500);
+  outline-offset: 2px;
+}
+
+.topbar__user-dropdown {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 132px;
+  padding: 6px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: 0 8px 24px rgb(31 41 55 / 12%);
 }
 
 .topbar__user-avatar {
@@ -97,26 +125,31 @@
 
 .topbar__dropdown-icon {
   color: var(--text-tertiary);
+  transition: transform var(--transition);
 }
 
-/* —— 退出登录按钮 —— */
+.topbar__user-menu--open .topbar__dropdown-icon {
+  transform: rotate(180deg);
+}
+
+/* —— 用户下拉菜单中的退出登录按钮 —— */
 .topbar__logout-btn {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  margin-left: 8px;
-  padding: 6px 12px;
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  background: var(--bg-card);
+  width: 100%;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
+  text-align: left;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .topbar__logout-btn:hover {
   color: #b91c1c;
-  border-color: #fecaca;
   background: #fef2f2;
 }

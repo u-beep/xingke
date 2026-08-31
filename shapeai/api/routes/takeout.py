@@ -18,13 +18,37 @@
 """
 
 from fastapi import APIRouter, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from ...records import TakeoutStore
+from ...records.takeout_store import SHOP_LOGO_FILES
 from ..security import get_auth_user_id
 
 router = APIRouter(prefix="/takeout", tags=["外卖选购"])
+
+
+# ─── 公开图片接口（免登录: 品牌 logo, 无用户数据） ───
+
+# 允许返回的图片 key 白名单（品牌 logo 文件名, 防 SSRF/任意对象读取）
+# 与 takeout_store.SHOP_LOGO_FILES 保持同步
+_ALLOWED_LOGO_KEYS = set(SHOP_LOGO_FILES.values())
+
+
+@router.get("/images/{file_name}", summary="获取品牌 logo 图片")
+async def get_brand_image(file_name: str):
+    """从 MinIO 流式返回品牌 logo 图片（公开接口, 免登录）。"""
+    # 白名单校验: 只允许已知 logo 文件名, 拒绝路径穿越/任意 key
+    if file_name not in _ALLOWED_LOGO_KEYS:
+        return Response(status_code=404)
+    try:
+        from ...storage import get_object_bytes
+        from ...records.takeout_store import TAKEOUT_BUCKET
+        data, ctype = get_object_bytes(f"takeout/logos/{file_name}", bucket=TAKEOUT_BUCKET)
+        return Response(content=data, media_type=ctype)
+    except Exception:
+        return Response(status_code=404)
 
 
 # ─── 请求模型 ───

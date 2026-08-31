@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 1280px; height: 720px;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+  }
+  .cover {
+    width: 1280px; height: 720px;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 40%, #334155 100%);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    color: #f1f5f9;
+  }
+  /* 左侧装饰条 */
+  .accent-bar {
+    position: absolute;
+    left: 0; top: 0;
+    width: 12px; height: 100%;
+    background: linear-gradient(to bottom, #38bdf8, #6366f1, #a855f7);
+  }
+  /* 右上角徽标 */
+  .badge {
+    position: absolute;
+    top: 40px; right: 48px;
+    font-size: 14px;
+    letter-spacing: 4px;
+    color: #94a3b8;
+    text-transform: uppercase;
+    border: 1px solid #475569;
+    border-radius: 4px;
+    padding: 6px 16px;
+    background: rgba(30,41,59,0.6);
+  }
+  /* 主内容 */
+  .content {
+    padding-left: 100px;
+    max-width: 850px;
+  }
+  .logo-mark {
+    font-size: 22px;
+    color: #38bdf8;
+    letter-spacing: 8px;
+    margin-bottom: 24px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .title {
+    font-size: 120px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #f8fafc 0%, #38bdf8 50%, #a855f7 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 4px;
+    line-height: 1.1;
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    font-size: 28px;
+    color: #cbd5e1;
+    letter-spacing: 12px;
+    margin-bottom: 36px;
+    font-weight: 300;
+  }
+  .tags {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 48px;
+    flex-wrap: wrap;
+  }
+  .tag {
+    font-size: 16px;
+    color: #e2e8f0;
+    background: rgba(56,189,248,0.1);
+    border: 1px solid rgba(56,189,248,0.3);
+    padding: 8px 20px;
+    border-radius: 24px;
+    letter-spacing: 1px;
+  }
+  .desc {
+    font-size: 18px;
+    color: #94a3b8;
+    line-height: 1.8;
+    max-width: 700px;
+    letter-spacing: 1px;
+  }
+  /* 右侧装饰 */
+  .deco-circle {
+    position: absolute;
+    right: -120px; bottom: -120px;
+    width: 480px; height: 480px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(99,102,241,0.15) 0%, transparent 70%);
+  }
+  .deco-ring {
+    position: absolute;
+    right: 60px; bottom: 60px;
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    border: 2px solid rgba(56,189,248,0.15);
+  }
+  .deco-ring2 {
+    position: absolute;
+    right: 100px; bottom: 100px;
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    border: 2px solid rgba(168,85,247,0.2);
+  }
+  .tech-stack {
+    position: absolute;
+    bottom: 40px; right: 48px;
+    font-size: 13px;
+    color: #64748b;
+    letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+  <div class="cover">
+    <div class="accent-bar"></div>
+    <div class="badge">AI Health Assistant</div>
+    <div class="content">
+      <div class="logo-mark">XINGKE</div>
+      <div class="title">星语健康</div>
+      <div class="subtitle">智能饮食与运动管理平台</div>
+      <div class="tags">
+        <span class="tag">AI 营养师</span>
+        <span class="tag">体重管理</span>
+        <span class="tag">热量追踪</span>
+        <span class="tag">运动记录</span>
+        <span class="tag">健康趋势</span>
+      </div>
+      <div class="desc">
+        融合 AI 大模型对话、智能营养分析、体重趋势可视化与目标管理，<br>
+        为用户提供个性化的健康生活解决方案。
+      </div>
+    </div>
+    <div class="deco-circle"></div>
+    <div class="deco-ring"></div>
+    <div class="deco-ring2"></div>
+    <div class="tech-stack">FastAPI · PostgreSQL · React · RAG · Milvus</div>
+  </div>
+</body>
+</html>

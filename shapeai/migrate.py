@@ -9,6 +9,7 @@
 import logging
 from .database import pg_cursor, redis_client, get_milvus, mysql_cursor
 from .config import MILVUS_COLLECTION
+from .records.activity_store import ACTIVITY_SCHEMA_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +203,10 @@ CREATE TABLE IF NOT EXISTS takeout_orders (
 CREATE INDEX IF NOT EXISTS idx_takeout_orders_user_time ON takeout_orders (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_takeout_orders_status ON takeout_orders (order_status);
 
+-- 订单碳水/脂肪总量（后续补充字段，历史订单默认 0）
+ALTER TABLE takeout_orders ADD COLUMN IF NOT EXISTS total_carbs_g FLOAT DEFAULT 0;
+ALTER TABLE takeout_orders ADD COLUMN IF NOT EXISTS total_fat_g FLOAT DEFAULT 0;
+
 -- 运动记录表
 CREATE TABLE IF NOT EXISTS exercise_records (
     id              BIGSERIAL PRIMARY KEY,
@@ -286,6 +291,9 @@ CREATE INDEX IF NOT EXISTS idx_fridge_items_user_cat  ON fridge_items (user_id, 
 CREATE INDEX IF NOT EXISTS idx_fridge_items_user_expires ON fridge_items (user_id, expires_at);
 """
 
+# 活动模块建表 SQL（活动/群聊/成员/消息, 见 records/activity_store.py）
+ACTIVITY_PG_SCHEMA_SQL = ACTIVITY_SCHEMA_SQL
+
 # ─── MySQL 同步副本建表 SQL ───
 
 MYSQL_SCHEMA_SQL = """
@@ -365,6 +373,7 @@ def migrate_postgresql():
     """执行 PostgreSQL 建表迁移。"""
     logger.info("开始 PostgreSQL 迁移...")
     statements = [s.strip() for s in PG_SCHEMA_SQL.split(";") if s.strip()]
+    statements += [s.strip() for s in ACTIVITY_PG_SCHEMA_SQL.split(";") if s.strip()]
     for stmt in statements:
         try:
             with pg_cursor() as cur:

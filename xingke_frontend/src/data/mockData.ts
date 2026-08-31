@@ -1,15 +1,5 @@
 // 模拟数据
 
-export const mockWeightData = [
-  { date: '08/05', weight: 72.8, bodyFat: 22.5, waist: 82, hip: 96 },
-  { date: '08/06', weight: 72.5, bodyFat: 22.3, waist: 81.5, hip: 95.8 },
-  { date: '08/07', weight: 72.3, bodyFat: 22.1, waist: 81, hip: 95.5 },
-  { date: '08/08', weight: 72.6, bodyFat: 22.4, waist: 81.2, hip: 95.6 },
-  { date: '08/09', weight: 72.1, bodyFat: 21.9, waist: 80.5, hip: 95.2 },
-  { date: '08/10', weight: 71.8, bodyFat: 21.7, waist: 80, hip: 95 },
-  { date: '08/11', weight: 71.5, bodyFat: 21.5, waist: 79.5, hip: 94.8 },
-]
-
 export const mockMessages = [
   {
     id: '1',
@@ -113,18 +103,4 @@ export const mockGoalProgress = {
   startWeight: 75.0,
   percentage: 71,
   weeklyChange: -0.3,
-}
-
-export const mockDashboardMetrics = {
-  weight: { value: 71.5, unit: 'kg', change: -0.3, label: '较上周' },
-  bodyFat: { value: 21.5, unit: '%', change: -0.4, label: '环比变化' },
-  bmi: { value: 22.8, unit: '', change: 0, label: '正常', status: 'normal' },
-  exercise: { count: 4, total: 5, calories: 1280, label: '本周完成' },
-}
-
-export const mockWeeklySummary = {
-  avgCalorieDeficit: 320,
-  exerciseCount: 4,
-  weightChange: -0.3,
-  dietCheckInRate: 85,
 }

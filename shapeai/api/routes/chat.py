@@ -30,12 +30,16 @@ _TASK_TTL_SECONDS = 600  # 任务结果保留 10 分钟后清理
 
 
 def _run_agent_task(task_id: str, agent, message: str) -> None:
-    """后台线程：执行 agent._ask_continuing，完成后把结果写入任务存储。"""
+    """后台线程：执行 agent._ask_continuing，完成后把结果写入任务存储。
+
+    如果任务已被用户通过 /chat/cancel 终止（status=cancelled），
+    则不覆盖取消状态，避免已被终止的结果又返回给前端。
+    """
     try:
         response = agent._ask_continuing(message)
         with _chat_tasks_lock:
             task = _chat_tasks.get(task_id)
-            if task:
+            if task and task.get("status") != "cancelled":
                 task["status"] = "done"
                 task["result"] = response
                 task["session_id"] = agent.session.get("id", task.get("session_id", ""))
@@ -65,8 +69,13 @@ def _cleanup_expired_tasks() -> None:
                         expired.append(tid)
                 except (ValueError, TypeError):
                     expired.append(tid)
+            else:
+                expired.append(tid)
         for tid in expired:
-            _chat_tasks.pop(tid, None)
+            task = _chat_tasks.pop(tid, None)
+            # 释放 agent 引用，避免长期持有拖慢 GC
+            if task:
+                task.pop("agent", None)
     if expired:
         logger.debug("[chat_task] 清理过期任务 %d 个", len(expired))
 
@@ -284,6 +293,10 @@ async def chat_start(request: ChatRequest, req: Request):
     )
     thread.start()
 
+    # 在任务存储里登记 agent 引用，供 /chat/poll 与 /chat/extract 读取后台提取结果
+    with _chat_tasks_lock:
+        _chat_tasks[task_id]["agent"] = agent
+
     logger.info("[chat_task] 已启动 task_id=%s session_id=%s user=%s",
                 task_id, agent.session["id"], request.user_id)
 
@@ -298,10 +311,13 @@ async def chat_start(request: ChatRequest, req: Request):
 async def chat_poll(task_id: str, req: Request):
     """轮询 /chat/start 发起的对话任务状态。
 
-    返回 {status, result, error, session_id, done}：
+    返回 {status, result, error, session_id, done, extract_status}：
     - status="running"：AgentLoop 仍在执行，继续轮询
     - status="done"：完成，result 为完整回复
     - status="error"：失败，error 为错误信息
+    - extract_status="pending"：后台提取仍在进行（前端可用 /chat/extract 拉取）
+    - extract_status="ready"：提取结果已就绪
+    - extract_status="none"：无提取结果（主回复已返回且无饮食/饮水记录）
     """
     _cleanup_expired_tasks()
 
@@ -309,7 +325,14 @@ async def chat_poll(task_id: str, req: Request):
         task = _chat_tasks.get(task_id)
         if not task:
             return {"task_id": task_id, "status": "unknown", "done": True,
-                    "error": "任务不存在或已过期", "result": "", "session_id": ""}
+                    "error": "任务不存在或已过期", "result": "", "session_id": "",
+                    "extract_status": "none"}
+        agent = task.get("agent")
+        # 后台提取状态：done 但 last_extract_result 为 None 说明提取线程还在跑
+        if task["status"] == "done":
+            extract_status = "ready" if (agent and getattr(agent, "last_extract_result", None) is not None) else "pending"
+        else:
+            extract_status = "none"
         # 返回快照（避免外部修改）
         return {
             "task_id": task_id,
@@ -317,5 +340,68 @@ async def chat_poll(task_id: str, req: Request):
             "result": task["result"] or "",
             "error": task["error"],
             "session_id": task.get("session_id", ""),
-            "done": task["status"] in ("done", "error"),
+            "done": task["status"] in ("done", "error", "cancelled"),
+            "extract_status": extract_status,
         }
+
+
+@router.get("/extract", summary="拉取后台提取结果（饮食/饮水）")
+async def chat_extract(task_id: str, req: Request):
+    """拉取 /chat/start 任务的后台提取结果。
+
+    主回复生成后立即返回（提取在后台线程执行），前端在用户阅读回复的
+    同时轮询本接口拿提取结果，弹“确认记录”卡片。
+
+    返回 {status, diet_data, water_data}：
+    - status="ready"：提取完成，diet_data/water_data 可能为 None（无记录）
+    - status="pending"：提取仍在进行，稍后再来
+    - status="none"：任务不存在/未完成/无提取（终结态，前端停止轮询）
+    """
+    with _chat_tasks_lock:
+        task = _chat_tasks.get(task_id)
+        if not task:
+            return {"status": "none", "diet_data": None, "water_data": None}
+        agent = task.get("agent")
+        task_status = task.get("status")
+
+    # 主任务未完成时提取结果尚不可用
+    if task_status != "done":
+        return {"status": "none", "diet_data": None, "water_data": None}
+
+    result = getattr(agent, "last_extract_result", None) if agent else None
+    if result is None:
+        return {"status": "pending", "diet_data": None, "water_data": None}
+
+    diet_data = result.get("diet_data")
+    water_data = result.get("water_data")
+    # 提取结果只拉取一次，拉完即清（防止同一结果被重复弹卡片）
+    with _chat_tasks_lock:
+        t = _chat_tasks.get(task_id)
+        if t and t.get("agent") is not None:
+            t["agent"].last_extract_result = None
+    return {
+        "status": "ready",
+        "diet_data": diet_data,
+        "water_data": water_data,
+    }
+
+
+@router.post("/cancel", summary="终止正在生成的对话任务")
+async def chat_cancel(task_id: str, req: Request):
+    """终止 /chat/start 发起的对话任务。
+
+    用户在前端点击"停止生成"时调用。将任务标记为 cancelled 后：
+    - /chat/poll 会立即返回 status=cancelled（done=True），前端停止轮询；
+    - 后台线程完成时不会覆盖取消状态，结果不再返回给前端。
+    """
+    with _chat_tasks_lock:
+        task = _chat_tasks.get(task_id)
+        if not task:
+            return {"task_id": task_id, "success": False, "message": "任务不存在或已结束"}
+        if task["status"] == "running":
+            task["status"] = "cancelled"
+            task["error"] = "用户已手动终止生成"
+            task["finished_at"] = datetime.now().isoformat()
+            logger.info("[chat_task] 已终止 task_id=%s", task_id)
+            return {"task_id": task_id, "success": True, "message": "已终止生成"}
+        return {"task_id": task_id, "success": False, "message": f"任务已结束（{task['status']}）"}

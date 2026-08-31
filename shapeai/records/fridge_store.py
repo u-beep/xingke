@@ -20,6 +20,9 @@ from ..database import pg_cursor
 
 logger = logging.getLogger(__name__)
 
+# 内置公共食材图库对象；仅这一前缀可由免登录的 catalog 图片接口读取。
+CATALOG_IMAGE_KEY_PREFIX = "fridge/catalog/"
+
 
 @dataclass
 class FridgeItem:
@@ -44,7 +47,14 @@ class FridgeItem:
     updated_at: Optional[datetime] = None
 
     def to_dict(self) -> dict:
-        image_url = f"/api/v1/fridge/items/{self.id}/image" if (self.id and self.image_object_key) else None
+        image_url = None
+        if self.id and self.image_object_key:
+            # 公共食材图库不含用户隐私，供 <img> 免登录直接加载；
+            # 拍照上传的原始图片仍使用受保护的用户图片接口。
+            if self.image_object_key.startswith(CATALOG_IMAGE_KEY_PREFIX):
+                image_url = f"/api/v1/fridge/catalog-images/{self.id}"
+            else:
+                image_url = f"/api/v1/fridge/items/{self.id}/image"
         return {
             "id": self.id,
             "user_id": self.user_id,
@@ -167,12 +177,19 @@ class FridgeStore:
                         user_id         VARCHAR(64) NOT NULL,
                         recipe_name     VARCHAR(256) NOT NULL,
                         total_calories  FLOAT DEFAULT 0,
+                        total_protein_g FLOAT DEFAULT 0,
+                        total_carbs_g   FLOAT DEFAULT 0,
+                        total_fat_g     FLOAT DEFAULT 0,
                         consumed_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                         ingredients_summary TEXT,
                         recipe_json     JSONB,
                         created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
                 """)
+                # 兼容已创建的旧餐次表，补齐三大营养素列。
+                cur.execute("ALTER TABLE fridge_meal_log ADD COLUMN IF NOT EXISTS total_protein_g FLOAT DEFAULT 0")
+                cur.execute("ALTER TABLE fridge_meal_log ADD COLUMN IF NOT EXISTS total_carbs_g FLOAT DEFAULT 0")
+                cur.execute("ALTER TABLE fridge_meal_log ADD COLUMN IF NOT EXISTS total_fat_g FLOAT DEFAULT 0")
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_meal_log_user_day
                     ON fridge_meal_log (user_id, consumed_at DESC)
@@ -186,28 +203,36 @@ class FridgeStore:
         self,
         user_id: str,
         recipe_name: str,
-        total_calories: float,
+        nutrition: dict[str, float],
         ingredients_summary: Optional[str] = None,
         recipe: Optional[dict] = None,
     ) -> Optional[int]:
-        """记录一餐的菜品与摄入热量(确认菜谱扣减时调用)。"""
+        """记录确认烹饪的一餐及完整宏量营养素，供饮食记录页面汇总展示。"""
         try:
             with pg_cursor(commit=True) as cur:
                 cur.execute("""
                     INSERT INTO fridge_meal_log
-                        (user_id, recipe_name, total_calories, ingredients_summary, recipe_json)
-                    VALUES (%s, %s, %s, %s, %s)
+                        (user_id, recipe_name, total_calories, total_protein_g,
+                         total_carbs_g, total_fat_g, ingredients_summary, recipe_json)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    user_id, recipe_name, round(total_calories, 1),
+                    user_id,
+                    recipe_name,
+                    round(float(nutrition.get("calories") or 0), 1),
+                    round(float(nutrition.get("protein_g") or 0), 1),
+                    round(float(nutrition.get("carbs_g") or 0), 1),
+                    round(float(nutrition.get("fat_g") or 0), 1),
                     ingredients_summary,
                     json.dumps(recipe, ensure_ascii=False) if recipe else None,
                 ))
                 row = cur.fetchone()
-                mid = row[0] if row else None
-                logger.info("已记录餐次: user=%s recipe=%s cal=%.1f id=%s",
-                            user_id, recipe_name, total_calories, mid)
-                return mid
+                meal_id = row[0] if row else None
+                logger.info(
+                    "已记录冰箱餐次: user=%s recipe=%s nutrition=%s id=%s",
+                    user_id, recipe_name, nutrition, meal_id,
+                )
+                return meal_id
         except Exception as exc:
             logger.error("记录餐次失败: %s", exc)
             return None
@@ -232,8 +257,8 @@ class FridgeStore:
         try:
             with pg_cursor() as cur:
                 cur.execute("""
-                    SELECT id, recipe_name, total_calories, consumed_at,
-                           ingredients_summary
+                    SELECT id, recipe_name, total_calories, total_protein_g,
+                           total_carbs_g, total_fat_g, consumed_at, ingredients_summary
                     FROM fridge_meal_log
                     WHERE user_id = %s AND consumed_at >= %s AND consumed_at < %s
                     ORDER BY consumed_at DESC
@@ -242,13 +267,16 @@ class FridgeStore:
                 logs = []
                 for r in rows:
                     # timestamptz 转 UTC → 本地，输出精确到分钟
-                    consumed = r[3].astimezone(local_tz) if r[3] else None
+                    consumed = r[6].astimezone(local_tz) if r[6] else None
                     logs.append({
                         "id": r[0],
                         "recipe_name": r[1],
                         "total_calories": r[2],
+                        "total_protein_g": r[3] or 0,
+                        "total_carbs_g": r[4] or 0,
+                        "total_fat_g": r[5] or 0,
                         "consumed_at": _iso_minute(consumed),
-                        "ingredients_summary": r[4],
+                        "ingredients_summary": r[7],
                     })
                 return logs
         except Exception as exc:
@@ -308,6 +336,24 @@ class FridgeStore:
                 return self._row_to_item(row) if row else None
         except Exception as exc:
             logger.error("查询冰箱食材失败: %s", exc)
+            return None
+
+    def get_catalog_image_key(self, item_id: int) -> Optional[str]:
+        """获取内置公共食材图库对象 key。
+
+        仅返回 ``fridge/catalog/`` 前缀对象，避免公开接口读取用户拍照上传的私有图片。
+        """
+        try:
+            with pg_cursor(commit=False) as cur:
+                cur.execute("""
+                    SELECT image_object_key
+                    FROM fridge_items
+                    WHERE id = %s AND image_object_key LIKE %s
+                """, (item_id, f"{CATALOG_IMAGE_KEY_PREFIX}%"))
+                row = cur.fetchone()
+                return row[0] if row else None
+        except Exception as exc:
+            logger.error("查询公共食材图库对象失败: %s", exc)
             return None
 
     # ─── 增删改 ───
@@ -557,8 +603,9 @@ class FridgeStore:
 
                     # 1) name+unit 精确
                     cur.execute("""
-                        SELECT id, quantity_g, unit FROM fridge_items
-                        WHERE user_id = %s AND name = %s AND unit = %s
+                    SELECT id, quantity_g, unit, calories, protein_g, carbs_g, fat_g
+                    FROM fridge_items
+                    WHERE user_id = %s AND name = %s AND unit = %s
                         ORDER BY created_at DESC LIMIT 1
                     """, (user_id, name, unit))
                     row = cur.fetchone()
@@ -567,7 +614,8 @@ class FridgeStore:
                     # 2) name 任意 unit
                     if not row:
                         cur.execute("""
-                            SELECT id, quantity_g, unit FROM fridge_items
+                            SELECT id, quantity_g, unit, calories, protein_g, carbs_g, fat_g
+                            FROM fridge_items
                             WHERE user_id = %s AND name = %s
                             ORDER BY created_at DESC LIMIT 1
                         """, (user_id, name))
@@ -577,15 +625,16 @@ class FridgeStore:
                     # 3) 子串模糊（recipe name 含 fridge name 或反之）
                     if not row:
                         cur.execute("""
-                            SELECT id, name, quantity_g, unit FROM fridge_items
+                            SELECT id, name, quantity_g, unit, calories, protein_g, carbs_g, fat_g
+                            FROM fridge_items
                             WHERE user_id = %s
                         """, (user_id,))
                         candidates = cur.fetchall()
-                        for cid, cname, cqty, cunit in candidates:
+                        for cid, cname, cqty, cunit, ccal, cprotein, ccarbs, cfat in candidates:
                             if not cname:
                                 continue
                             if name in cname or cname in name:
-                                row = (cid, cqty, cunit)
+                                row = (cid, cqty, cunit, ccal, cprotein, ccarbs, cfat)
                                 match_way = "fuzzy"
                                 break
 
@@ -601,6 +650,12 @@ class FridgeStore:
                         continue
 
                     item_id, avail_qty, item_unit = row[0], (row[1] or 0), (row[2] or "g")
+                    per_100g = {
+                        "calories": float(row[3] or 0),
+                        "protein_g": float(row[4] or 0),
+                        "carbs_g": float(row[5] or 0),
+                        "fat_g": float(row[6] or 0),
+                    }
                     entry["unit"] = item_unit
                     if avail_qty >= amount:
                         deduct = amount
@@ -612,13 +667,12 @@ class FridgeStore:
                     entry["deducted"] = round(deduct, 1)
                     entry["status"] = status
                     entry["item_id"] = item_id
-                    # 每100g热量(供上层按菜谱用量算理论摄入)
-                    entry["calories_per_100g"] = cal_per100
-                    # 该项实际摄入热量 = 扣减量 * 每100g热量 / 100
-                    if cal_per100 and deduct > 0:
-                        entry["calories"] = round(cal_per100 * deduct / 100, 1)
-                    else:
-                        entry["calories"] = 0
+                    # 每 100g 营养参考及实际扣减量对应的营养值，供上层展示和核对。
+                    entry.update({f"{key}_per_100g": value for key, value in per_100g.items()})
+                    entry.update({
+                        key: round(value * deduct / 100, 1)
+                        for key, value in per_100g.items()
+                    })
 
                     cur.execute("""
                         UPDATE fridge_items

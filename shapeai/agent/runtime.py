@@ -16,7 +16,7 @@ from .prompt_center import PromptCenter
 from .agent_loop import AgentLoop
 from ..gateway import ModelGateway
 from ..user_profile import ProfileStore, PreferenceUpdater
-from ..records import DietExtractor, HydrationExtractor
+from ..records import DietExtractor, HydrationExtractor, CombinedExtractor
 from ..config import AGENT_MAX_STEPS, MODEL_MAX_TOKENS, CONTEXT_BUDGET
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,13 @@ class ShapeAgent:
 
         # 饮水自动提取器
         self.hydration_extractor = HydrationExtractor(gateway=gateway)
+
+        # 合并提取器（一次 LLM 调用同时提取饮食+饮水，后台异步执行）
+        self.combined_extractor = CombinedExtractor(gateway=gateway)
+
+        # 最近一次后台提取结果（后台线程写入，接口层轮询读取）
+        # None=尚未完成，{"diet_data":..,"water_data":..}=已完成
+        self.last_extract_result = None
 
         self.prompt_center = PromptCenter()
         self.prefix = self.prompt_center.build_prefix(self.tools)

@@ -131,6 +131,76 @@ class ExerciseStore:
             logger.error("查询运动历史失败: %s", exc)
             return []
 
+    def get_history_range(
+        self,
+        user_id: str,
+        start_date: date,
+        end_date: date,
+        limit: int = 500,
+    ) -> List[ExerciseRecord]:
+        """查询指定日期区间的运动记录（用于日历切换历史）。"""
+        try:
+            with pg_cursor(commit=False) as cur:
+                cur.execute("""
+                    SELECT id, user_id, exercise_name, exercise_type, duration_min,
+                           calories_burned, completed, scheduled_date, recorded_at, notes
+                    FROM exercise_records
+                    WHERE user_id = %s AND scheduled_date BETWEEN %s AND %s
+                    ORDER BY scheduled_date DESC, recorded_at DESC
+                    LIMIT %s
+                """, (user_id, start_date, end_date, limit))
+                rows = cur.fetchall()
+                return [self._row_to_record(row) for row in rows]
+        except Exception as exc:
+            logger.error("查询运动记录区间失败: %s", exc)
+            return []
+
+    def get_daily_stats(
+        self,
+        user_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> List[dict]:
+        """按日聚合运动统计（次数/时长/消耗热量），用于统计图表。"""
+        try:
+            with pg_cursor(commit=False) as cur:
+                cur.execute("""
+                    SELECT scheduled_date,
+                           COUNT(*) AS record_count,
+                           COALESCE(SUM(duration_min), 0) AS total_duration,
+                           COALESCE(SUM(calories_burned), 0) AS total_calories
+                    FROM exercise_records
+                    WHERE user_id = %s AND scheduled_date BETWEEN %s AND %s
+                    GROUP BY scheduled_date
+                    ORDER BY scheduled_date
+                """, (user_id, start_date, end_date))
+                rows = cur.fetchall()
+                return [
+                    {
+                        "date": r[0].isoformat() if r[0] else None,
+                        "count": r[1],
+                        "duration_min": int(r[2] or 0),
+                        "calories": round(float(r[3] or 0), 1),
+                    }
+                    for r in rows
+                ]
+        except Exception as exc:
+            logger.error("查询运动日统计失败: %s", exc)
+            return []
+
+    def delete_record(self, record_id: int, user_id: str) -> bool:
+        """删除指定用户的运动记录。"""
+        try:
+            with pg_cursor(commit=True) as cur:
+                cur.execute(
+                    "DELETE FROM exercise_records WHERE id = %s AND user_id = %s",
+                    (record_id, user_id),
+                )
+                return cur.rowcount > 0
+        except Exception as exc:
+            logger.error("删除运动记录失败: %s", exc)
+            return False
+
     def get_week_summary(self, user_id: str) -> dict:
         """获取本周运动统计。"""
         try:
@@ -141,8 +211,8 @@ class ExerciseStore:
                     SELECT
                         COUNT(*) as total_count,
                         COUNT(*) FILTER (WHERE completed = TRUE) as completed_count,
-                        COALESCE(SUM(duration_min), 0) as total_duration,
-                        COALESCE(SUM(calories_burned), 0) as total_calories
+                        COALESCE(SUM(duration_min) FILTER (WHERE completed = TRUE), 0) as total_duration,
+                        COALESCE(SUM(calories_burned) FILTER (WHERE completed = TRUE), 0) as total_calories
                     FROM exercise_records
                     WHERE user_id = %s AND scheduled_date >= %s
                 """, (user_id, week_start))

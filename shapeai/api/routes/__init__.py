@@ -18,6 +18,7 @@ from .feedback import router as feedback_router
 from .export import router as export_router
 from .takeout import router as takeout_router
 from .fridge import router as fridge_router
+from .activities import router as activities_router
 
 __all__ = [
     "auth_router",
@@ -38,4 +39,5 @@ __all__ = [
     "export_router",
     "takeout_router",
     "fridge_router",
+    "activities_router",
 ]

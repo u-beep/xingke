@@ -102,7 +102,7 @@
   gap: 8px;
   font-size: 15px;
   font-weight: 700;
-  color: var(--text-1, #e4eae8);
+  color: var(--text-primary);
 }
 
 .diet-record__section-total {
@@ -112,8 +112,8 @@
   font-size: 12px;
   font-weight: 600;
   border-radius: 999px;
-  background: rgba(94, 234, 212, 0.12);
-  color: var(--mint-400, #5eead4);
+  background: var(--mt-100);
+  color: var(--mt-700);
 }
 
 /* ─── 日期切换控件(右上角) ─── */
@@ -126,10 +126,10 @@
 .diet-date-nav__btn {
   width: 30px;
   height: 30px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-1, #e4eae8);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -138,9 +138,9 @@
 }
 
 .diet-date-nav__btn:hover:not(:disabled) {
-  background: rgba(94, 234, 212, 0.14);
-  border-color: var(--mint-400, #5eead4);
-  color: var(--mint-400, #5eead4);
+  background: var(--mt-50);
+  border-color: var(--mt-400);
+  color: var(--mt-700);
 }
 
 .diet-date-nav__btn:disabled {
@@ -185,7 +185,7 @@
 .diet-record-item__name {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-1, #e4eae8);
+  color: var(--text-primary);
 }
 
 .diet-record-item__source {
@@ -198,27 +198,19 @@
   font-weight: 500;
 }
 
-.diet-record-item__source--order {
-  background: rgba(251, 191, 36, 0.14);
-  color: #fbbf24;
-}
-
-.diet-record-item__source--fridge {
-  background: rgba(94, 234, 212, 0.14);
-  color: var(--mint-400, #5eead4);
-}
-
+.diet-record-item__source--order,
+.diet-record-item__source--fridge,
 .diet-record-item__source--chat {
-  background: rgba(167, 139, 250, 0.14);
-  color: #a78bfa;
+  background: var(--mt-50);
+  color: var(--mt-700);
 }
 
 .diet-record-item__meal {
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 11px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-2, #a8b3b0);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .diet-record-item__detail {
@@ -227,7 +219,7 @@
   gap: 10px;
   flex-wrap: wrap;
   font-size: 12px;
-  color: var(--text-2, #a8b3b0);
+  color: var(--text-secondary);
 }
 
 .diet-record-item__ingredients {
@@ -235,6 +227,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 480px;
+}
+
+.diet-record-item__macros {
+  color: var(--mt-700);
+  font-weight: 600;
 }
 
 .diet-record-item__excluded-tag {
@@ -256,12 +253,12 @@
   gap: 4px;
   font-size: 15px;
   font-weight: 700;
-  color: var(--mint-400, #5eead4);
+  color: var(--mt-600);
 }
 
 .diet-record-item__time {
   font-size: 12px;
-  color: var(--text-3, #7a8a86);
+  color: var(--text-tertiary);
 }
 
 .diet-record__loading {
@@ -300,16 +297,16 @@
   padding: 0;
   border: none;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--mint-400, #5eead4);
+  background: var(--mt-50);
+  color: var(--mt-600);
   cursor: pointer;
   vertical-align: middle;
   transition: background 0.2s, color 0.2s;
 }
 
 .budget-edit-btn:hover {
-  background: var(--mint-400, #5eead4);
-  color: #0d1f1c;
+  background: var(--mt-400);
+  color: var(--text-on-brand);
 }
 
 .budget-source-tag {
@@ -318,8 +315,8 @@
   font-size: 10px;
   font-style: normal;
   border-radius: 4px;
-  background: rgba(94, 234, 212, 0.16);
-  color: var(--mint-400, #5eead4);
+  background: var(--mt-100);
+  color: var(--mt-700);
 }
 
 /* ─── 小尺寸弹窗 ─── */
@@ -346,13 +343,13 @@
   margin: 0;
   padding: 10px 14px;
   font-size: 13px;
-  border-radius: 8px;
-  background: rgba(94, 234, 212, 0.1);
-  color: var(--text-1, #e4eae8);
+  border-radius: var(--radius-sm);
+  background: var(--mt-50);
+  color: var(--text-primary);
 }
 
 .budget-modal__suggested strong {
-  color: var(--mint-400, #5eead4);
+  color: var(--mt-700);
 }
 
 .budget-modal__quick {
@@ -365,10 +362,10 @@
   flex: 1;
   min-width: 72px;
   padding: 10px 0;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-1, #e4eae8);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-primary);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -376,18 +373,18 @@
 }
 
 .budget-modal__quick-btn:hover {
-  background: rgba(94, 234, 212, 0.14);
-  border-color: var(--mint-400, #5eead4);
-  color: var(--mint-400, #5eead4);
+  background: var(--mt-50);
+  border-color: var(--mt-400);
+  color: var(--mt-700);
 }
 
 .budget-modal__input {
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  background: rgba(13, 31, 28, 0.6);
-  color: var(--text-1, #e4eae8);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-primary);
   font-size: 16px;
   font-weight: 600;
   outline: none;
@@ -395,7 +392,8 @@
 }
 
 .budget-modal__input:focus {
-  border-color: var(--mint-400, #5eead4);
+  border-color: var(--mt-400);
+  box-shadow: 0 0 0 3px var(--mt-50);
 }
 
 .budget-modal__submit {

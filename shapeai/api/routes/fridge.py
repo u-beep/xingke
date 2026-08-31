@@ -156,6 +156,29 @@ async def delete_item(item_id: int, req: Request):
     return {"success": True, "message": "已删除"}
 
 
+@router.get("/catalog-images/{item_id}", summary="获取公共食材图库图片")
+async def get_catalog_image(item_id: int):
+    """从 MinIO 返回内置公共食材图库图片（免登录）。
+
+    查询时严格限制 ``fridge/catalog/`` 对象前缀，绝不暴露用户拍照上传的私有图片。
+    """
+    store = FridgeStore()
+    image_key = store.get_catalog_image_key(item_id)
+    if not image_key:
+        raise HTTPException(status_code=404, detail="公共食材图片不存在")
+    try:
+        from ...storage import get_object_bytes
+        data, ctype = get_object_bytes(image_key)
+        return Response(
+            content=data,
+            media_type=ctype,
+            headers={"Cache-Control": "public, max-age=604800, immutable"},
+        )
+    except Exception as exc:
+        logger.error("读取公共食材图片失败: %s", exc)
+        raise HTTPException(status_code=404, detail="公共食材图片对象不存在")
+
+
 @router.get("/items/{item_id}/image", summary="获取食材原始图片")
 async def get_item_image(item_id: int, req: Request):
     """从 MinIO 流式返回食材原始图片。"""
@@ -303,8 +326,9 @@ async def recommend_recipes(request: RecipeRecommendRequest, req: Request):
     if not ingredient_lines:
         return {"recipes": [], "fridge_snapshot": [it.to_dict() for it in items], "message": "所有食材库存为0"}
 
-    ingredients_text = "\n".join(ingredient_lines)
-    prefs = request.preferences.strip() if request.preferences else "无"
+    ingredients_text = "\n".join(ingredient_lines[:25])  # 截断超长清单，控制输入 token
+    # 无偏好("默认"/空输入)时不附加任何额外提示词，缩短 prompt 加快首 token
+    prefs = request.preferences.strip() if request.preferences else ""
 
     # 1) 缓存命中: 冰箱未变+偏好相同 → 秒回
     fingerprint = tuple(sorted(
@@ -320,16 +344,21 @@ async def recommend_recipes(request: RecipeRecommendRequest, req: Request):
             "cached": True,
         }
 
+    pref_section = f"【用户要求】{prefs}\n" if prefs else ""
+    dish_rule = (
+        "1. 只用现有食材+基础调味料；若【用户要求】是具体菜名，按该菜名生成，缺少的食材照常列入 ingredients；"
+        if prefs
+        else "1. 只用现有食材+基础调味料；"
+    )
     prompt = f"""你是家常菜营养师。根据冰箱现有食材推荐最多 2 道菜谱。
 
 【食材】
 {ingredients_text}
-【偏好】{prefs}
-
+{pref_section}
 要求：
-1. 只用现有食材+基础调味料；
-2. 步骤精简，每步不超过 20 字；
-3. 直接输出 JSON，不要思考、不要解释、不要 markdown。
+{dish_rule}
+2. 步骤每步不超过 20 字；
+3. 直接输出 JSON，不要思考、不要解释；格式中的字段值仅为占位示例，禁止照抄示例文字（如"菜名""一句话""名"）。
 
 格式：{{"recipes":[{{"name":"菜名","description":"一句话","steps":["…"],"ingredients":[{{"name":"名","amount_g":100,"unit":"g"}}]}}]}}
 """
@@ -341,7 +370,7 @@ async def recommend_recipes(request: RecipeRecommendRequest, req: Request):
     if fast_client is not None:
         try:
             raw = fast_client.complete(
-                prompt, max_new_tokens=1600,
+                prompt, max_new_tokens=700,
             ) or ""
             recipes = _parse_recipes(raw)
             logger.info(
@@ -356,7 +385,7 @@ async def recommend_recipes(request: RecipeRecommendRequest, req: Request):
     if not recipes:
         try:
             raw = app_state.gateway.complete(
-                prompt, max_new_tokens=4096,
+                prompt, max_new_tokens=1500,
                 user_id=user_id, scene="fridge_recipe", route="complex",
             ) or ""
             recipes = _parse_recipes(raw)
@@ -371,14 +400,20 @@ async def recommend_recipes(request: RecipeRecommendRequest, req: Request):
                 "fridge_snapshot": [it.to_dict() for it in items],
                 "raw": f"AI 推荐生成失败: {exc}",
             }
-    # 为每个菜谱计算标注热量(基于用料与冰箱/内置营养库)
-    fridge_cal_map = {
-        it.name: it.calories for it in items if it.calories
+    # 按菜谱用量计算整餐热量和三大营养素；冰箱营养值缺失时回退内置营养库。
+    fridge_nutrition_map = {
+        it.name: {
+            "calories": it.calories,
+            "protein_g": it.protein_g,
+            "carbs_g": it.carbs_g,
+            "fat_g": it.fat_g,
+        }
+        for it in items
     }
     for rcp in recipes:
-        rcp["total_calories"] = _calc_recipe_calories(
-            rcp.get("ingredients") or [], fridge_cal_map,
-        )
+        rcp.update(_calc_recipe_nutrition(
+            rcp.get("ingredients") or [], fridge_nutrition_map,
+        ))
 
     # 4) 写入缓存(简单 LRU: 超容量淘汰最旧)
     if recipes:
@@ -394,33 +429,57 @@ async def recommend_recipes(request: RecipeRecommendRequest, req: Request):
     }
 
 
-def _calc_recipe_calories(
+def _calc_recipe_nutrition(
     ingredients: list[dict],
-    fridge_cal_map: dict[str, float],
-) -> float:
-    """按菜谱用料计算总热量(kcal)。
+    fridge_nutrition_map: dict[str, dict],
+) -> dict[str, float]:
+    """按菜谱用量计算整餐热量及蛋白质、碳水、脂肪。
 
-    优先级: 冰箱食材的 calories_per_100g → FOOD_DATABASE(别名→精确→模糊)。
-    无法估热量的用料(如盐)跳过。
+    冰箱中手动维护的每 100g 营养值优先；任一字段缺失时，按别名/精确/模糊
+    匹配回退到 ``FOOD_DATABASE``。调味料等没有营养参考的用料会被跳过。
     """
-    total = 0.0
+    totals = {"total_calories": 0.0, "total_protein_g": 0.0, "total_carbs_g": 0.0, "total_fat_g": 0.0}
+    db_key_map = {
+        "total_calories": "calories",
+        "total_protein_g": "protein",
+        "total_carbs_g": "carbs",
+        "total_fat_g": "fat",
+    }
+    fridge_key_map = {
+        "total_calories": "calories",
+        "total_protein_g": "protein_g",
+        "total_carbs_g": "carbs_g",
+        "total_fat_g": "fat_g",
+    }
+
     for ing in ingredients:
         name = (ing.get("name") or "").strip()
         amount = float(ing.get("amount_g") or 0)
         if not name or amount <= 0:
             continue
-        cal = fridge_cal_map.get(name)
-        if not cal:
-            std_name = FOOD_ALIAS.get(name, name)
-            db = (
-                FOOD_DATABASE.get(std_name)
-                or FOOD_DATABASE.get(name)
-                or _fuzzy_match_food(name, FOOD_DATABASE)
+
+        fridge_nutrition = fridge_nutrition_map.get(name)
+        if not fridge_nutrition:
+            fridge_nutrition = next(
+                (nutrition for item_name, nutrition in fridge_nutrition_map.items()
+                 if item_name and (name in item_name or item_name in name)),
+                {},
             )
-            cal = db.get("calories") if db else None
-        if cal and cal > 0:
-            total += cal * amount / 100
-    return round(total, 1)
+        std_name = FOOD_ALIAS.get(name, name)
+        fallback = (
+            FOOD_DATABASE.get(std_name)
+            or FOOD_DATABASE.get(name)
+            or _fuzzy_match_food(name, FOOD_DATABASE)
+            or {}
+        )
+        for total_key, db_key in db_key_map.items():
+            value = (fridge_nutrition or {}).get(fridge_key_map[total_key])
+            if value is None:
+                value = fallback.get(db_key)
+            if value is not None:
+                totals[total_key] += float(value) * amount / 100
+
+    return {key: round(value, 1) for key, value in totals.items()}
 
 
 @router.post("/recipes/confirm", summary="确认使用菜谱并扣减库存")
@@ -436,30 +495,17 @@ async def confirm_recipe(request: RecipeConfirmRequest, req: Request):
     result = store.deduct_ingredients(user_id, ingredients)
     items = store.list_items(user_id)
 
-    # 按菜谱用料算理论摄入热量(不依赖实际扣减量,库存不足仍按菜谱记录)
-    # 优先用 deduct 返回的 calories_per_100g(冰箱匹配项),缺失则查 FOOD_DATABASE
-    deducted_map = {d.get("name", ""): d for d in result.get("deducted", [])}
-    total_cal = 0.0
-    for ing in ingredients:
-        ing_name = (ing.get("name") or "").strip()
-        amount = float(ing.get("amount_g") or 0)
-        if not ing_name or amount <= 0:
-            continue
-        # 1) 扣减命中的项:用冰箱 calories_per_100g
-        d = deducted_map.get(ing_name)
-        cal_per100 = d.get("calories_per_100g") if d else None
-        # 2) 未命中:查 FOOD_DATABASE(别名→标准名→精确→模糊)
-        if not cal_per100:
-            std_name = FOOD_ALIAS.get(ing_name, ing_name)
-            db = (
-                FOOD_DATABASE.get(std_name)
-                or FOOD_DATABASE.get(ing_name)
-                or _fuzzy_match_food(ing_name, FOOD_DATABASE)
-            )
-            cal_per100 = db.get("calories") if db else None
-        if cal_per100 and cal_per100 > 0:
-            total_cal += cal_per100 * amount / 100
-    total_cal = round(total_cal, 1)
+    # 使用菜谱指定用量计算理论整餐营养；库存不足时仍保留用户确认烹饪的摄入记录。
+    fridge_nutrition_map = {
+        it.name: {
+            "calories": it.calories,
+            "protein_g": it.protein_g,
+            "carbs_g": it.carbs_g,
+            "fat_g": it.fat_g,
+        }
+        for it in items
+    }
+    nutrition = _calc_recipe_nutrition(ingredients, fridge_nutrition_map)
 
     # 用料摘要
     summary = "、".join(
@@ -472,7 +518,12 @@ async def confirm_recipe(request: RecipeConfirmRequest, req: Request):
         meal_id = store.add_meal_log(
             user_id=user_id,
             recipe_name=recipe.get("name", ""),
-            total_calories=total_cal,
+            nutrition={
+                "calories": nutrition["total_calories"],
+                "protein_g": nutrition["total_protein_g"],
+                "carbs_g": nutrition["total_carbs_g"],
+                "fat_g": nutrition["total_fat_g"],
+            },
             ingredients_summary=summary,
             recipe=recipe,
         )
@@ -483,7 +534,7 @@ async def confirm_recipe(request: RecipeConfirmRequest, req: Request):
         "deducted": result.get("deducted", []),
         "insufficient": result.get("insufficient", []),
         "missing": result.get("missing", []),
-        "total_calories": total_cal,
+        **nutrition,
         "meal_id": meal_id,
         "items": [it.to_dict() for it in items],
         "message": _build_deduction_message(result),
@@ -638,6 +689,8 @@ def _extract_recipes(data) -> list:
     for r in recipes:
         if not isinstance(r, dict) or not r.get("name"):
             continue
+        if _is_placeholder_recipe(r):
+            continue
         ingredients = []
         for ing in r.get("ingredients") or []:
             if isinstance(ing, dict) and ing.get("name"):
@@ -653,3 +706,28 @@ def _extract_recipes(data) -> list:
             "ingredients": ingredients,
         })
     return result
+
+
+# prompt 格式示例中的占位字样，模型照抄示例时会出现这些"菜谱"
+_PLACEHOLDER_WORDS = {"菜名", "菜谱名", "菜谱", "dish", "xxx", "…", "...", "example"}
+
+
+def _is_placeholder_recipe(r: dict) -> bool:
+    """识别模型照抄 prompt 格式示例产生的占位"菜谱"，避免污染展示与缓存。"""
+    name = str(r.get("name") or "").strip().lower()
+    if not name or name in _PLACEHOLDER_WORDS:
+        return True
+    desc = str(r.get("description") or "").strip()
+    steps = r.get("steps") or []
+    ingredients = r.get("ingredients") or []
+    # 描述是占位语且无实际步骤/用料
+    if desc in ("一句话", "一句话描述", "简短描述") and not steps and not ingredients:
+        return True
+    # 用料全是占位（如"名 100g"）
+    if ingredients and all(
+        str(i.get("name") or "").strip() in ("名", "食材", "…", "...")
+        for i in ingredients
+        if isinstance(i, dict)
+    ):
+        return True
+    return False

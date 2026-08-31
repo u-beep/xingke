@@ -60,11 +60,38 @@ async def get_plan_by_date(req: Request, user_id: str = "anonymous", date: str =
     return summary
 
 
+@router.post("/item/{item_id}/complete", summary="确认完成运动计划项")
+async def complete_plan_item(item_id: int, req: Request):
+    """确认完成后写入实际运动记录，并从此刻起计入热量消耗。"""
+    user_id = get_auth_user_id(req)
+    plan_store = ExercisePlanStore()
+    plan_item, completed_now, record_id = plan_store.complete_item(item_id, user_id)
+    if plan_item is None:
+        return {"success": False, "message": "未找到该运动计划项"}
+    if not completed_now:
+        return {
+            "success": True,
+            "already_completed": True,
+            "message": "该运动已完成，热量已计入消耗记录",
+        }
+
+    if record_id is None:
+        return {"success": False, "message": "保存运动消耗记录失败，请稍后重试"}
+
+    return {
+        "success": True,
+        "record_id": record_id,
+        "calories_burned": plan_item.calories_burned,
+        "message": "已完成并计入运动消耗",
+    }
+
+
 @router.delete("/item/{item_id}", summary="删除运动计划项")
 async def delete_plan_item(item_id: int, req: Request):
-    """删除一项运动计划。"""
+    """删除当前用户的一项运动计划。"""
+    user_id = get_auth_user_id(req)
     store = ExercisePlanStore()
-    deleted = store.delete_item(item_id)
+    deleted = store.delete_item(item_id, user_id)
     return {"success": deleted}
 
 

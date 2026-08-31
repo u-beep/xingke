@@ -25,6 +25,7 @@ from .routes import (
     chat_router, tools_router, knowledge_router, image_router, profile_router,
     weight_router, diet_router, hydration_router, exercise_router, exercise_plan_router, workout_router, dashboard_router,
     goals_router, feedback_router, export_router, takeout_router, fridge_router,
+    activities_router,
     auth_router,
 )
 
@@ -213,6 +214,7 @@ def create_app(gateway: ModelGateway | None = None) -> FastAPI:
     app.include_router(export_router, prefix="/api/v1")
     app.include_router(takeout_router, prefix="/api/v1")
     app.include_router(fridge_router, prefix="/api/v1")
+    app.include_router(activities_router, prefix="/api/v1")
 
     # 全局登录鉴权中间件（解析 Bearer Token -> request.state.user_id，未登录访问受保护接口返回 401）
     app.middleware("http")(auth_middleware)

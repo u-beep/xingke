@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 _minio_client = None
 _minio_lock = threading.Lock()
-_bucket_ensured = False
+_ensured_buckets: set[str] = set()
 
 
 def get_minio_client():
@@ -52,16 +52,15 @@ def get_minio_client():
 
 
 def ensure_bucket(bucket: str = MINIO_BUCKET) -> None:
-    """确保 bucket 存在（幂等，仅首次执行 IO）。"""
-    global _bucket_ensured
-    if _bucket_ensured:
+    """确保 bucket 存在（幂等，按 bucket 粒度只首次执行 IO）。"""
+    if bucket in _ensured_buckets:
         return
     client = get_minio_client()
     try:
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
             logger.info("已创建 MinIO bucket: %s", bucket)
-        _bucket_ensured = True
+        _ensured_buckets.add(bucket)
     except Exception as exc:
         logger.error("确保 MinIO bucket 失败: %s", exc)
         raise

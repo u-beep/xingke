@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   ShoppingCart,
   Flame,
@@ -14,8 +15,10 @@ import {
   Star,
   Clock,
   Truck,
-  ChevronLeft,
-  Store,
+ChevronLeft,
+Store,
+Wheat,
+Droplet,
 } from 'lucide-react'
 import {
   takeoutApi,
@@ -42,10 +45,13 @@ const MEAL_LABEL: Record<string, string> = {
 }
 
 export default function Takeout() {
+  // 店铺/品类同步 URL ?shop= &category=（刷新后保持浏览位置）
+  const [searchParams, setSearchParams] = useSearchParams()
+
   // 一级：店家列表 / 二级：店内菜单
   const [shops, setShops] = useState<TakeoutShopInfo[]>([])
   const [shopCategories, setShopCategories] = useState<string[]>([])
-  const [activeShopCategory, setActiveShopCategory] = useState<string>('')
+  const [activeShopCategory, setActiveShopCategoryState] = useState<string>(() => searchParams.get('category') || '')
   const [loadingShops, setLoadingShops] = useState(true)
 
   const [shopDetail, setShopDetail] = useState<TakeoutShopDetail | null>(null)
@@ -62,10 +68,43 @@ export default function Takeout() {
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null)
 
+  /** 切换品类筛选: 同步 URL（刷新后保持） */
+  const setActiveShopCategory = (c: string) => {
+    setActiveShopCategoryState(c)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (c) next.set('category', c)
+        else next.delete('category')
+        return next
+      },
+      { replace: true },
+    )
+  }
+
+  /** 同步 URL 参数到 URL（不触发重新渲染循环） */
+  const syncShopToUrl = (shopName: string | null) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (shopName) next.set('shop', shopName)
+        else next.delete('shop')
+        return next
+      },
+      { replace: true },
+    )
+  }
+
   useEffect(() => {
     fetchShops()
     fetchShopCategories()
     fetchToday()
+    // 刷新恢复: URL 带 ?shop= 时自动重新进入该店铺
+    const shopParam = searchParams.get('shop')
+    if (shopParam) {
+      restoreShop(shopParam)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -110,6 +149,7 @@ export default function Takeout() {
   /** 进入店家点餐页 */
   const enterShop = async (shop: TakeoutShopInfo) => {
     setLoadingMenu(true)
+    syncShopToUrl(shop.shop_name)
     try {
       const detail = await takeoutApi.shopDetail(shop.shop_name)
       setShopDetail(detail)
@@ -120,7 +160,23 @@ export default function Takeout() {
     }
   }
 
-  const exitShop = () => setShopDetail(null)
+  /** 刷新后按 URL ?shop= 恢复店铺详情（静默失败则留在列表） */
+  const restoreShop = async (shopName: string) => {
+    setLoadingMenu(true)
+    try {
+      const detail = await takeoutApi.shopDetail(shopName)
+      setShopDetail(detail)
+    } catch {
+      syncShopToUrl(null)
+    } finally {
+      setLoadingMenu(false)
+    }
+  }
+
+  const exitShop = () => {
+    setShopDetail(null)
+    syncShopToUrl(null)
+  }
 
   const openCheckout = (dish: TakeoutDishInfo) => {
     setCheckoutDish(dish)
@@ -278,78 +334,82 @@ export default function Takeout() {
     <div className="takeout">
       <SummaryBar summary={summary} />
 
-      {/* 品类筛选 */}
-      <div className="takeout__tabs">
-        <button
-          className={`takeout-tab ${activeShopCategory === '' ? 'takeout-tab--active' : ''}`}
-          onClick={() => setActiveShopCategory('')}
-        >
-          全部
-        </button>
-        {shopCategories.map((c) => (
+      {/* 品类筛选（左侧竖排导航）+ 店家列表，参考「我的冰箱」两栏布局 */}
+      <div className="takeout__body">
+        <div className="takeout__cat-nav">
           <button
-            key={c}
-            className={`takeout-tab ${activeShopCategory === c ? 'takeout-tab--active' : ''}`}
-            onClick={() => setActiveShopCategory(c)}
+            className={`takeout-cat ${activeShopCategory === '' ? 'takeout-cat--active' : ''}`}
+            onClick={() => setActiveShopCategory('')}
           >
-            {c}
+            全部
           </button>
-        ))}
-      </div>
-
-      {/* 店家列表 */}
-      {loadingShops ? (
-        <div className="takeout__loading card">
-          <Loader2 size={24} className="spin" /> 正在加载店家...
-        </div>
-      ) : shops.length === 0 ? (
-        <div className="takeout__empty card">暂无可选店家</div>
-      ) : (
-        <div className="takeout-shops">
-          {shops.map((shop) => (
-            <div key={shop.id} className="shop-card card" onClick={() => enterShop(shop)}>
-              {shop.logo_url ? (
-                <img src={shop.logo_url} alt={shop.shop_name} className="shop-card__logo" />
-              ) : (
-                <div className="shop-card__logo shop-card__logo--placeholder">
-                  <Store size={24} />
-                </div>
-              )}
-              <div className="shop-card__body">
-                <div className="shop-card__title-row">
-                  <span className="shop-card__name">{shop.shop_name}</span>
-                  <span className="shop-card__rating">
-                    <Star size={12} /> {shop.rating.toFixed(1)}
-                  </span>
-                </div>
-                <div className="shop-card__meta">
-                  <span>月售 {shop.monthly_sales}</span>
-                  <span>约{shop.delivery_minutes}分钟</span>
-                  <span>
-                    起送¥{shop.min_order_price} · 配送¥{shop.delivery_fee}
-                  </span>
-                </div>
-                <div className="shop-card__tags">
-                  <span className="shop-card__tag">{shop.category}</span>
-                </div>
-              </div>
-              <ChevronRightish />
-            </div>
+          {shopCategories.map((c) => (
+            <button
+              key={c}
+              className={`takeout-cat ${activeShopCategory === c ? 'takeout-cat--active' : ''}`}
+              onClick={() => setActiveShopCategory(c)}
+            >
+              {c}
+            </button>
           ))}
         </div>
-      )}
 
-      {/* 今日订单列表 */}
-      {orders.length > 0 && (
-        <div className="takeout__orders">
-          <h3 className="takeout-orders__title">今日订单</h3>
-          <div className="takeout-orders__list">
-            {orders.map((order) => (
-              <OrderRow key={order.id} order={order} onCancel={() => handleCancelOrder(order.id)} />
-            ))}
-          </div>
+        <div className="takeout__main">
+          {/* 店家列表 */}
+          {loadingShops ? (
+            <div className="takeout__loading card">
+              <Loader2 size={24} className="spin" /> 正在加载店家...
+            </div>
+          ) : shops.length === 0 ? (
+            <div className="takeout__empty card">暂无可选店家</div>
+          ) : (
+            <div className="takeout-shops">
+              {shops.map((shop) => (
+                <div key={shop.id} className="shop-card card" onClick={() => enterShop(shop)}>
+                  {shop.logo_url ? (
+                    <img src={shop.logo_url} alt={shop.shop_name} className="shop-card__logo" />
+                  ) : (
+                    <div className="shop-card__logo shop-card__logo--placeholder">
+                      <Store size={24} />
+                    </div>
+                  )}
+                  <div className="shop-card__body">
+                    <div className="shop-card__title-row">
+                      <span className="shop-card__name">{shop.shop_name}</span>
+                      <span className="shop-card__rating">
+                        <Star size={12} /> {shop.rating.toFixed(1)}
+                      </span>
+                    </div>
+                    <div className="shop-card__meta">
+                      <span>月售 {shop.monthly_sales}</span>
+                      <span>约{shop.delivery_minutes}分钟</span>
+                      <span>
+                        起送¥{shop.min_order_price} · 配送¥{shop.delivery_fee}
+                      </span>
+                    </div>
+                    <div className="shop-card__tags">
+                      <span className="shop-card__tag">{shop.category}</span>
+                    </div>
+                  </div>
+                  <ChevronRightish />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 今日订单列表 */}
+          {orders.length > 0 && (
+            <div className="takeout__orders">
+              <h3 className="takeout-orders__title">今日订单</h3>
+              <div className="takeout-orders__list">
+                {orders.map((order) => (
+                  <OrderRow key={order.id} order={order} onCancel={() => handleCancelOrder(order.id)} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* 下单弹窗 */}
       {checkoutDish && (
@@ -419,6 +479,24 @@ function SummaryBar({ summary }: { summary: TakeoutSummary | null }) {
           <span className="takeout-summary__label">已计入蛋白质(g)</span>
         </div>
       </div>
+      <div className="takeout-summary__item">
+        <Wheat size={20} className="takeout-summary__icon" />
+        <div>
+          <span className="takeout-summary__value takeout-summary__value--accent">
+            {summary?.stats_carbs_g?.toFixed(1) ?? 0}
+          </span>
+          <span className="takeout-summary__label">已计入碳水(g)</span>
+        </div>
+      </div>
+      <div className="takeout-summary__item">
+        <Droplet size={20} className="takeout-summary__icon" />
+        <div>
+          <span className="takeout-summary__value takeout-summary__value--accent">
+            {summary?.stats_fat_g?.toFixed(1) ?? 0}
+          </span>
+          <span className="takeout-summary__label">已计入脂肪(g)</span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -473,6 +551,8 @@ function CheckoutModal({
               <div className="takeout-checkout__meta">
                 <span><Flame size={12} /> {(dish.calories ?? 0).toFixed(0)} kcal</span>
                 <span><Beef size={12} /> {(dish.protein_g ?? 0).toFixed(1)}g 蛋白</span>
+                <span><Wheat size={12} /> {(dish.carbs_g ?? 0).toFixed(1)}g 碳水</span>
+                <span><Droplet size={12} /> {(dish.fat_g ?? 0).toFixed(1)}g 脂肪</span>
                 {dish.price > 0 && (
                   <span className="takeout-checkout__price">¥{dish.price}</span>
                 )}
@@ -514,10 +594,10 @@ function CheckoutModal({
               </button>
             </div>
             <span className="takeout-checkout__total">
-              合计 <Flame size={12} />
-              {((dish.calories ?? 0) * quantity).toFixed(0)} kcal ·
-              <Beef size={12} />
-              {((dish.protein_g ?? 0) * quantity).toFixed(1)}g
+              合计 <Flame size={12} /> {((dish.calories ?? 0) * quantity).toFixed(0)} kcal ·
+              <Beef size={12} /> 蛋白 {((dish.protein_g ?? 0) * quantity).toFixed(1)}g ·
+              <Wheat size={12} /> 碳水 {((dish.carbs_g ?? 0) * quantity).toFixed(1)}g ·
+              <Droplet size={12} /> 脂肪 {((dish.fat_g ?? 0) * quantity).toFixed(1)}g
             </span>
           </div>
 
@@ -529,12 +609,12 @@ function CheckoutModal({
             />
             <span className="takeout-checkout__stats-label">
               <CheckCircle2 size={16} />
-              将这份外卖计入当日热量与蛋白质统计
+              将这份外卖计入当日营养统计
             </span>
           </label>
           {!includeInStats && (
             <p className="takeout-checkout__stats-hint">
-              未勾选时，订单仍会写入饮食记录中可见，但不会影响当日热量与蛋白质统计数据。
+              未勾选时，订单仍会写入饮食记录中可见，但不会影响当日热量、蛋白质、碳水和脂肪统计。
             </p>
           )}
 
@@ -577,6 +657,8 @@ function DishCard({
         <div className="dish-card__meta">
           <span><Flame size={12} /> {(dish.calories ?? 0).toFixed(0)} kcal</span>
           <span><Beef size={12} /> {(dish.protein_g ?? 0).toFixed(1)}g 蛋白</span>
+          <span><Wheat size={12} /> {(dish.carbs_g ?? 0).toFixed(1)}g 碳水</span>
+          <span><Droplet size={12} /> {(dish.fat_g ?? 0).toFixed(1)}g 脂肪</span>
         </div>
         <div className="dish-card__footer">
           {dish.price > 0 ? (
@@ -619,7 +701,8 @@ function OrderRow({
         </span>
         <span className="takeout-order-row__meta">
           {MEAL_LABEL[order.meal_type] || order.meal_type} · {order.total_calories.toFixed(0)} kcal ·
-          {order.total_protein_g.toFixed(1)}g 蛋白
+          蛋白 {order.total_protein_g.toFixed(1)}g · 碳水 {(order.total_carbs_g ?? 0).toFixed(1)}g ·
+          脂肪 {(order.total_fat_g ?? 0).toFixed(1)}g
         </span>
       </div>
       <div className="takeout-order-row__right">

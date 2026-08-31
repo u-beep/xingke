@@ -40,6 +40,18 @@ export function isLoggedIn(): boolean {
   return !!getToken()
 }
 
+/**
+ * 为受保护的图片接口 URL 附加 token 查询参数。
+ * <img> 标签无法携带 Authorization 请求头，
+ * 后端 auth_middleware 会回退读取 ?token= 完成鉴权。
+ */
+export function authedImageUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  const token = getToken()
+  if (!token) return url
+  return url + (url.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`
+}
+
 /** 当前业务用户 ID（= 用户名），所有数据接口按此隔离 */
 export function getCurrentUserId(): string {
   return getAuthUser()?.user_id || 'anonymous'

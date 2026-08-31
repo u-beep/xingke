@@ -48,6 +48,15 @@ async def record_exercise(request: ExerciseRecordRequest, req: Request):
     }
 
 
+@router.delete("/record/{record_id}", summary="删除运动记录")
+async def delete_exercise_record(record_id: int, req: Request):
+    """删除当前用户的一条运动记录。"""
+    user_id = get_auth_user_id(req)
+    store = ExerciseStore()
+    deleted = store.delete_record(record_id, user_id)
+    return {"success": deleted, "message": "已删除" if deleted else "记录不存在"}
+
+
 @router.get("/today", summary="获取今日运动")
 async def get_today_exercise(req: Request):
     """获取用户今日运动记录。"""
@@ -78,13 +87,44 @@ async def get_exercise_history(
     req: Request,
     days: int = 30,
     limit: int = 200,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ):
-    """查询用户运动历史。"""
+    """查询用户运动历史。支持 days 近 N 天，或 start_date+end_date 指定区间。"""
     user_id = get_auth_user_id(req)
     store = ExerciseStore()
-    records = store.get_history(user_id, days=days, limit=limit)
+    if start_date and end_date:
+        records = store.get_history_range(
+            user_id,
+            date.fromisoformat(start_date),
+            date.fromisoformat(end_date),
+            limit=limit,
+        )
+    else:
+        records = store.get_history(user_id, days=days, limit=limit)
     return {
         "records": [r.to_dict() for r in records],
         "count": len(records),
         "days": days,
+    }
+
+
+@router.get("/stats", summary="按日聚合运动统计")
+async def get_exercise_stats(
+    req: Request,
+    start_date: str,
+    end_date: str,
+):
+    """按日聚合运动统计（次数/时长/消耗热量），用于周/月/年统计图表。"""
+    user_id = get_auth_user_id(req)
+    store = ExerciseStore()
+    stats = store.get_daily_stats(
+        user_id,
+        date.fromisoformat(start_date),
+        date.fromisoformat(end_date),
+    )
+    return {
+        "stats": stats,
+        "start_date": start_date,
+        "end_date": end_date,
     }

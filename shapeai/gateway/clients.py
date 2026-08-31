@@ -123,8 +123,12 @@ class OpenAICompatibleClient(ModelClient):
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         base = self.base_url
-        if not base.endswith("/v1"):
+        # 仅当 URL 尚未包含 /v1 路径时才补全，
+        # 兼容 https://host/v1/openai/native 这类已含 /v1 的网关地址。
+        if not base.rstrip("/").endswith("/v1") and "/v1/" not in base:
             base = base.rstrip("/") + "/v1"
+        else:
+            base = base.rstrip("/")
 
         request = urllib.request.Request(
             base + "/chat/completions",

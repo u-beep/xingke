@@ -10,13 +10,17 @@
 """
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 from ..database import pg_cursor
 
 logger = logging.getLogger(__name__)
+
+# 品牌 logo 在 MinIO 的存储桶（公开读, 通过 /api/v1/takeout/images/{key} 访问）
+TAKEOUT_BUCKET = "takeout-images"
 
 
 # ─── 数据类 ───
@@ -101,6 +105,8 @@ class TakeoutOrder:
     order_status: str = "confirmed"
     total_calories: float = 0.0
     total_protein_g: float = 0.0
+    total_carbs_g: float = 0.0
+    total_fat_g: float = 0.0
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
     # 关联字段（来自 join takeout_dishes，仅查询时填充）
@@ -121,6 +127,8 @@ class TakeoutOrder:
             "order_status": self.order_status,
             "total_calories": self.total_calories,
             "total_protein_g": self.total_protein_g,
+            "total_carbs_g": self.total_carbs_g,
+            "total_fat_g": self.total_fat_g,
             "notes": self.notes,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "image_url": self.image_url,
@@ -129,121 +137,129 @@ class TakeoutOrder:
         }
 
 
-# ─── 图片：菜品/店家真实食物图（按关键词匹配, 已下载到前端 public/dishes/） ───
+# ─── 图片：品牌 logo 存储 MinIO, 通过 /api/v1/takeout/images/{key} 流式返回 ───
 
-# 关键词 -> 本地图片文件名（/dishes/kw_<关键词>.jpg）
-# 图片来自 Flickr CC 搜索, 按食物关键词匹配, 与菜名语义一致
+# 店家名 -> 本地 logo 文件名（发布前已下载到 MinIO; 首次播种时自动上传）
+# 来源: 品牌favicon/官网 logo
+SHOP_LOGO_FILES = {
+    "肯德基": "kfc.jpg",
+    "麦当劳": "mcd.jpg",
+    "麦当劳·麦咖啡": "mccafe.png",
+    "老乡鸡": "laoxiangji.png",
+    "兰州拉面": "lanzhou_logo.png",
+    "瑞幸咖啡": "luckin.jpg",
+    "喜茶": "heytea.png",
+    "永和大王": "yonghe.jpg",
+    "吉野家": "jiyoshi.png",
+}
 
-def _build_image_url(slug: str) -> str:
-    """菜品图片: 前端静态资源 /dishes/kw_<slug>.jpg。"""
-    return f"/dishes/kw_{slug}.jpg"
+# logo 文件对应的 content_type
+_LOGO_CONTENT_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".svg": "image/svg+xml",
+}
+
+# logo 文件在本地资源目录的缓存路径（仅播种时读取, 不入代码仓库）
+_LOGO_DIR = "/tmp/brand_logos/final"
 
 
-def _build_shop_logo_url(slug: str) -> str:
-    """店家门头/Logo: 前端静态资源 /dishes/kw_<slug>.jpg。"""
-    return f"/dishes/kw_{slug}.jpg"
+def _logo_image_url(file_name: str) -> str:
+    """logo 的访问 URL: 后端公开接口流式返回 MinIO 对象。"""
+    return f"/api/v1/takeout/images/{file_name}"
+
+
+def _read_logo_bytes(file_name: str) -> Optional[tuple]:
+    """读取本地 logo 文件, 返回 (bytes, content_type); 不存在返回 None。"""
+    path = os.path.join(_LOGO_DIR, file_name)
+    if not os.path.isfile(path):
+        return None
+    ext = os.path.splitext(file_name)[1].lower()
+    ctype = _LOGO_CONTENT_TYPES.get(ext, "application/octet-stream")
+    with open(path, "rb") as f:
+        return f.read(), ctype
 
 
 # ─── 内置连锁店家（模仿美团外卖的连锁快餐品牌维度） ───
-# 字段: (店家名, 品类标签, 月售, 配送时长min, 起送价, 配送费, 评分, logo关键词)
+# 字段: (店家名, 品类标签, 月售, 配送时长min, 起送价, 配送费, 评分, logo文件名)
 
 BUILTIN_SHOPS = [
-    ("肯德基", "炸鸡汉堡", 8600, 30, 20, 4, 4.8, "chicken"),
-    ("麦当劳", "炸鸡汉堡", 9200, 25, 20, 5, 4.7, "burger"),
-    ("老乡鸡", "中式快餐", 5400, 35, 20, 3, 4.6, "bento"),
-    ("沙县小吃", "中式快餐", 3200, 30, 15, 2, 4.4, "noodle"),
-    ("兰州拉面", "面食", 4100, 32, 15, 2, 4.5, "noodle"),
-    ("麦当劳·麦咖啡", "咖啡茶饮", 2800, 20, 15, 3, 4.6, "coffee"),
-    ("瑞幸咖啡", "咖啡茶饮", 7300, 25, 15, 3, 4.7, "coffee"),
-    ("喜茶", "咖啡茶饮", 6500, 35, 20, 4, 4.8, "milktea"),
-    ("海底捞火锅外送", "火锅", 2200, 45, 60, 8, 4.9, "hotpot"),
-    ("永和大王", "中式快餐", 3600, 30, 20, 3, 4.5, "congee"),
-    ("吉野家", "日式简餐", 2900, 30, 25, 4, 4.6, "bento"),
-    ("乡村基", "中式快餐", 3100, 35, 20, 3, 4.5, "rice"),
+    ("肯德基", "炸鸡汉堡", 8600, 30, 20, 4, 4.8, "kfc.jpg"),
+    ("麦当劳", "炸鸡汉堡", 9200, 25, 20, 5, 4.7, "mcd.jpg"),
+    ("老乡鸡", "中式快餐", 5400, 35, 20, 3, 4.6, "laoxiangji.png"),
+    ("兰州拉面", "面食", 4100, 32, 15, 2, 4.5, "lanzhou_logo.png"),
+    ("麦当劳·麦咖啡", "咖啡茶饮", 2800, 20, 15, 3, 4.6, "mccafe.png"),
+    ("瑞幸咖啡", "咖啡茶饮", 7300, 25, 15, 3, 4.7, "luckin.jpg"),
+    ("喜茶", "咖啡茶饮", 6500, 35, 20, 4, 4.8, "heytea.png"),
+    ("永和大王", "中式快餐", 3600, 30, 20, 3, 4.5, "yonghe.jpg"),
+    ("吉野家", "日式简餐", 2900, 30, 25, 4, 4.6, "jiyoshi.png"),
 ]
 
 
-# ─── 内置外卖菜品（初始菜单, 以店家为维度组织; 图片关键词与菜名匹配） ───
-# 字段: (菜名, 所属店家, 店内分类, 描述, 克数, 热量, 蛋白, 碳水, 脂肪, 价格, 图片关键词)
+# ─── 内置外卖菜品（初始菜单, 以店家为维度组织; 图片统一用店家 logo） ───
+# 字段: (菜名, 所属店家, 店内分类, 描述, 克数, 热量, 蛋白, 碳水, 脂肪, 价格)
+# 注: 菜品图片统一使用所属店家的品牌 logo（存 MinIO）
 
 BUILTIN_DISHES = [
     # ── 肯德基 ──
-    ("香辣鸡腿堡", "肯德基", "汉堡", "经典香辣鸡腿堡，微辣多汁", 220, 590, 26.0, 56.0, 28.0, 19.5, "chicken"),
-    ("新奥尔良烤鸡腿堡", "肯德基", "汉堡", "甜辣烤鸡腿肉，黑胡椒酱", 215, 560, 27.0, 55.0, 25.0, 20.5, "chicken"),
-    ("吮指原味鸡(1块)", "肯德基", "炸鸡小食", "经典吮指原味鸡块", 110, 280, 17.0, 12.0, 18.0, 11.5, "chicken"),
-    ("香辣鸡翅(2块)", "肯德基", "炸鸡小食", "外豚里嫩，辣度适中", 100, 240, 15.0, 10.0, 15.0, 10.0, "chicken"),
-    ("葡式蛋挞(1个)", "肯德基", "甜品小食", "酥皮蛋液馅，甜而不腻", 55, 200, 3.5, 22.0, 11.0, 7.0, "egg"),
-    ("九珍果汁", "肯德基", "饮品", "多种果汁混合，酸甜清爽", 350, 150, 0, 38.0, 0, 11.0, "juice"),
+    ("香辣鸡腿堡", "肯德基", "汉堡", "经典香辣鸡腿堡，微辣多汁", 220, 590, 26.0, 56.0, 28.0, 19.5),
+    ("新奥尔良烤鸡腿堡", "肯德基", "汉堡", "甜辣烤鸡腿肉，黑胡椒酱", 215, 560, 27.0, 55.0, 25.0, 20.5),
+    ("吮指原味鸡(1块)", "肯德基", "炸鸡小食", "经典吮指原味鸡块", 110, 280, 17.0, 12.0, 18.0, 11.5),
+    ("香辣鸡翅(2块)", "肯德基", "炸鸡小食", "外豚里嫩，辣度适中", 100, 240, 15.0, 10.0, 15.0, 10.0),
+    ("葡式蛋挞(1个)", "肯德基", "甜品小食", "酥皮蛋液馅，甜而不腻", 55, 200, 3.5, 22.0, 11.0, 7.0),
+    ("九珍果汁", "肯德基", "饮品", "多种果汁混合，酸甜清爽", 350, 150, 0, 38.0, 0, 11.0),
 
     # ── 麦当劳 ──
-    ("巨无霸", "麦当劳", "汉堡", "双层牛肉饼，特制酱料", 219, 550, 26.0, 42.0, 28.0, 24.5, "burger"),
-    ("麦辣鸡腿堡", "麦当劳", "汉堡", "辣味鸡腿排，麦门经典", 195, 520, 24.0, 47.0, 24.0, 22.0, "chicken"),
-    ("薯条(中)", "麦当劳", "炸鸡小食", "金黄香脆薯条", 117, 340, 4.0, 44.0, 16.0, 12.0, "fries"),
-    ("麦乐鸡(5块)", "麦当劳", "炸鸡小食", "外豚内嫩鸡块配蘸酱", 95, 250, 13.0, 20.0, 13.0, 12.5, "chicken"),
-    ("圆筒冰淇淋", "麦当劳", "甜品小食", "香浓牛乳圆筒", 85, 200, 3.5, 32.0, 6.0, 5.0, "icecream"),
+    ("巨无霸", "麦当劳", "汉堡", "双层牛肉饼，特制酱料", 219, 550, 26.0, 42.0, 28.0, 24.5),
+    ("麦辣鸡腿堡", "麦当劳", "汉堡", "辣味鸡腿排，麦门经典", 195, 520, 24.0, 47.0, 24.0, 22.0),
+    ("薯条(中)", "麦当劳", "炸鸡小食", "金黄香脆薯条", 117, 340, 4.0, 44.0, 16.0, 12.0),
+    ("麦乐鸡(5块)", "麦当劳", "炸鸡小食", "外豚内嫩鸡块配蘸酱", 95, 250, 13.0, 20.0, 13.0, 12.5),
+    ("圆筒冰淇淋", "麦当劳", "甜品小食", "香浓牛乳圆筒", 85, 200, 3.5, 32.0, 6.0, 5.0),
 
     # ── 老乡鸡 ──
-    ("肥西老母鸡汤", "老乡鸡", "招牌汤品", "慢炖老母鸡汤，原汁原味", 400, 180, 18.0, 4.0, 8.0, 16.0, "soup"),
-    ("香辣鸡杂饭", "老乡鸡", "招牌套餐", "香辣鸡杂+米饭+小菜", 550, 680, 30.0, 82.0, 20.0, 26.0, "bento"),
-    ("梅菜扣肉饭", "老乡鸡", "招牌套餐", "梅菜扣肉+米饭+小菜", 560, 720, 25.0, 85.0, 26.0, 27.0, "bento"),
-    ("葱油鸡饭", "老乡鸡", "招牌套餐", "葱油鸡+米饭+小菜", 520, 590, 32.0, 70.0, 17.0, 25.0, "bento"),
-    ("农家蒸蛋", "老乡鸡", "小菜", "口感嫩滑的蒸水蛋", 180, 110, 8.0, 6.0, 6.5, 6.0, "egg"),
-
-    # ── 沙县小吃 ──
-    ("飘香拌面", "沙县小吃", "面食", "花生酱拌面，香气扑鼻", 300, 520, 12.0, 78.0, 18.0, 9.0, "noodle"),
-    ("柳叶蒸饺(8个)", "沙县小吃", "面食", "皮薄馅足的蒸饺", 240, 380, 14.0, 48.0, 12.0, 10.0, "dumpling"),
-    ("炖罐排骨汤", "沙县小吃", "汤品", "清炖排骨罐汤", 350, 220, 16.0, 6.0, 13.0, 13.0, "soup"),
-    ("扁食(馄饨)汤", "沙县小吃", "汤品", "皮薄馅嫩的馄饨", 320, 280, 13.0, 34.0, 9.0, 9.0, "wonton"),
+    ("肥西老母鸡汤", "老乡鸡", "招牌汤品", "慢炖老母鸡汤，原汁原味", 400, 180, 18.0, 4.0, 8.0, 16.0),
+    ("香辣鸡杂饭", "老乡鸡", "招牌套餐", "香辣鸡杂+米饭+小菜", 550, 680, 30.0, 82.0, 20.0, 26.0),
+    ("梅菜扣肉饭", "老乡鸡", "招牌套餐", "梅菜扣肉+米饭+小菜", 560, 720, 25.0, 85.0, 26.0, 27.0),
+    ("葱油鸡饭", "老乡鸡", "招牌套餐", "葱油鸡+米饭+小菜", 520, 590, 32.0, 70.0, 17.0, 25.0),
+    ("农家蒸蛋", "老乡鸡", "小菜", "口感嫩滑的蒸水蛋", 180, 110, 8.0, 6.0, 6.5, 6.0),
 
     # ── 兰州拉面 ──
-    ("牛肉拉面(小碗)", "兰州拉面", "面食", "一清二白三红四绿五黄", 400, 480, 22.0, 65.0, 14.0, 16.0, "noodle"),
-    ("牛肉拉面(大碗)", "兰州拉面", "面食", "分量十足，面香汤浓", 600, 680, 30.0, 92.0, 20.0, 19.0, "noodle"),
-    ("牛肉炒面片", "兰州拉面", "面食", "手工面片爆炒牛肉", 450, 620, 25.0, 76.0, 22.0, 20.0, "noodle"),
-    ("凉拌黄瓜", "兰州拉面", "小菜", "清爽解腻小菜", 150, 60, 1.2, 10.0, 0.3, 6.0, "salad"),
+    ("牛肉拉面(小碗)", "兰州拉面", "面食", "一清二白三红四绿五黄", 400, 480, 22.0, 65.0, 14.0, 16.0),
+    ("牛肉拉面(大碗)", "兰州拉面", "面食", "分量十足，面香汤浓", 600, 680, 30.0, 92.0, 20.0, 19.0),
+    ("牛肉炒面片", "兰州拉面", "面食", "手工面片爆炒牛肉", 450, 620, 25.0, 76.0, 22.0, 20.0),
+    ("凉拌黄瓜", "兰州拉面", "小菜", "清爽解腻小菜", 150, 60, 1.2, 10.0, 0.3, 6.0),
 
     # ── 麦咖啡 ──
-    ("拿铁(大杯)", "麦当劳·麦咖啡", "咖啡", "浓缩咖啡+蒸煮牛奶", 473, 190, 12.0, 18.0, 7.0, 25.0, "coffee"),
-    ("美式咖啡(大杯)", "麦当劳·麦咖啡", "咖啡", "香醇回甘，零负担", 473, 15, 1.0, 3.0, 0, 21.0, "coffee"),
-    ("燕麦拿铁", "麦当劳·麦咖啡", "咖啡", "燕麦奶拿铁，谷物香浓", 473, 220, 8.0, 30.0, 6.0, 28.0, "coffee"),
+    ("拿铁(大杯)", "麦当劳·麦咖啡", "咖啡", "浓缩咖啡+蒸煮牛奶", 473, 190, 12.0, 18.0, 7.0, 25.0),
+    ("美式咖啡(大杯)", "麦当劳·麦咖啡", "咖啡", "香醇回甘，零负担", 473, 15, 1.0, 3.0, 0, 21.0),
+    ("燕麦拿铁", "麦当劳·麦咖啡", "咖啡", "燕麦奶拿铁，谷物香浓", 473, 220, 8.0, 30.0, 6.0, 28.0),
 
     # ── 瑞幸咖啡 ──
-    ("生椰拿铁", "瑞幸咖啡", "咖啡", "浓缩+椰浆，椰香浓郁", 480, 223, 4.0, 34.0, 7.0, 18.0, "coffee"),
-    ("标准美式", "瑞幸咖啡", "咖啡", "IIAC金奖豆，香醇顺滑", 355, 5, 1.0, 1.0, 0, 16.0, "coffee"),
-    ("橙C美式", "瑞幸咖啡", "咖啡", "鲜橙汁+美式，维C满满", 355, 110, 1.5, 25.0, 0.3, 19.0, "coffee"),
-    ("厚乳拿铁", "瑞幸咖啡", "咖啡", "冷萃厚牛乳拿铁", 480, 252, 9.0, 27.0, 11.0, 22.0, "coffee"),
+    ("生椰拿铁", "瑞幸咖啡", "咖啡", "浓缩+椰浆，椰香浓郁", 480, 223, 4.0, 34.0, 7.0, 18.0),
+    ("标准美式", "瑞幸咖啡", "咖啡", "IIAC金奖豆，香醇顺滑", 355, 5, 1.0, 1.0, 0, 16.0),
+    ("橙C美式", "瑞幸咖啡", "咖啡", "鲜橙汁+美式，维C满满", 355, 110, 1.5, 25.0, 0.3, 19.0),
+    ("厚乳拿铁", "瑞幸咖啡", "咖啡", "冷萃厚牛乳拿铁", 480, 252, 9.0, 27.0, 11.0, 22.0),
 
     # ── 喜茶 ──
-    ("多肉葡萄", "喜茶", "招牌果茶", "当季葡萄+芝士奶盖", 500, 265, 5.0, 52.0, 5.0, 25.0, "milktea"),
-    ("芝芝莓莓", "喜茶", "招牌果茶", "草莓+芝士奶盖，酸甜平衡", 500, 250, 5.0, 50.0, 4.5, 25.0, "milktea"),
-    ("烤黑糖波波牛乳", "喜茶", "招牌奶茶", "黑糖珍珠+鲜牛乳", 500, 355, 8.0, 62.0, 9.0, 19.0, "bubbletea"),
-    ("满杯红柚", "喜茶", "招牌果茶", "西柚粒+绿茶，清新解腻", 500, 160, 1.5, 38.0, 0.5, 20.0, "milktea"),
-
-    # ── 海底捞火锅外送 ──
-    ("番茄牛腩锅(小锅)", "海底捞火锅外送", "锅底", "浓郁番茄牛腩锅底", 900, 650, 35.0, 45.0, 28.0, 88.0, "hotpot"),
-    ("招牌番茄锅(小锅)", "海底捞火锅外送", "锅底", "酸甜开胃番茄锅底", 900, 320, 8.0, 40.0, 12.0, 68.0, "hotpot"),
-    ("精品肥牛(半份)", "海底捞火锅外送", "涮品肉类", "雪花纹理肥牛卷", 150, 320, 16.0, 2.0, 27.0, 39.0, "beef"),
-    ("鲜切黄牛肉(半份)", "海底捞火锅外送", "涮品肉类", "现切黄牛后腿肉", 150, 200, 22.0, 2.0, 11.0, 42.0, "beef"),
-    ("手工鲜虾滑(半份)", "海底捞火锅外送", "涮品海鲜", "手打青虾滑，Q弹鲜甜", 150, 150, 16.0, 8.0, 7.0, 36.0, "shrimp"),
-    ("捞派毛肚(半份)", "海底捞火锅外送", "涮品肉类", "七上八下，脆爽弹牙", 150, 180, 20.0, 4.0, 10.0, 39.0, "hotpot"),
+    ("多肉葡萄", "喜茶", "招牌果茶", "当季葡萄+芝士奶盖", 500, 265, 5.0, 52.0, 5.0, 25.0),
+    ("芝芝莓莓", "喜茶", "招牌果茶", "草莓+芝士奶盖，酸甜平衡", 500, 250, 5.0, 50.0, 4.5, 25.0),
+    ("烤黑糖波波牛乳", "喜茶", "招牌奶茶", "黑糖珍珠+鲜牛乳", 500, 355, 8.0, 62.0, 9.0, 19.0),
+    ("满杯红柚", "喜茶", "招牌果茶", "西柚粒+绿茶，清新解腻", 500, 160, 1.5, 38.0, 0.5, 20.0),
 
     # ── 永和大王 ──
-    ("现磨醇豆浆", "永和大王", "早餐经典", "每日现磨，香浓顺滑", 500, 180, 8.0, 14.0, 8.0, 6.0, "soyamilk"),
-    ("安心油条", "永和大王", "早餐经典", "无矾配方，现炸酥脆", 80, 270, 5.0, 34.0, 12.0, 4.0, "youtiao"),
-    ("卤肉饭(大碗)", "永和大王", "招牌套餐", "酱香卤肉+卤蛋+米饭", 520, 640, 22.0, 82.0, 20.0, 24.0, "bento"),
-    ("牛肉冬粉汤", "永和大王", "汤面", "清炖牛肉+冬粉", 480, 380, 22.0, 52.0, 8.0, 26.0, "noodle"),
-    ("鲜肉大馄饨", "永和大王", "汤面", "皮薄馅大，汤头清甜", 400, 420, 18.0, 48.0, 15.0, 18.0, "wonton"),
+    ("现磨醇豆浆", "永和大王", "早餐经典", "每日现磨，香浓顺滑", 500, 180, 8.0, 14.0, 8.0, 6.0),
+    ("安心油条", "永和大王", "早餐经典", "无矾配方，现炸酥脆", 80, 270, 5.0, 34.0, 12.0, 4.0),
+    ("卤肉饭(大碗)", "永和大王", "招牌套餐", "酱香卤肉+卤蛋+米饭", 520, 640, 22.0, 82.0, 20.0, 24.0),
+    ("牛肉冬粉汤", "永和大王", "汤面", "清炖牛肉+冬粉", 480, 380, 22.0, 52.0, 8.0, 26.0),
+    ("鲜肉大馄饨", "永和大王", "汤面", "皮薄馅大，汤头清甜", 400, 420, 18.0, 48.0, 15.0, 18.0),
 
     # ── 吉野家 ──
-    ("招牌牛肉饭(中碗)", "吉野家", "招牌盖饭", "肥牛+洋葱+秘制酱汁", 480, 650, 25.0, 85.0, 20.0, 27.0, "rice"),
-    ("照烧鸡腿饭", "吉野家", "招牌盖饭", "照烧鸡腿排+温泉蛋", 500, 620, 30.0, 76.0, 18.0, 28.0, "bento"),
-    ("寿喜锅牛肉饭", "吉野家", "招牌盖饭", "寿喜烧风味肥牛饭", 490, 680, 26.0, 82.0, 24.0, 30.0, "rice"),
-    ("茶碗蒸", "吉野家", "小食", "日式嫩滑蒸蛋", 120, 90, 6.0, 6.0, 4.5, 8.0, "egg"),
+    ("招牌牛肉饭(中碗)", "吉野家", "招牌盖饭", "肥牛+洋葱+秘制酱汁", 480, 650, 25.0, 85.0, 20.0, 27.0),
+    ("照烧鸡腿饭", "吉野家", "招牌盖饭", "照烧鸡腿排+温泉蛋", 500, 620, 30.0, 76.0, 18.0, 28.0),
+    ("寿喜锅牛肉饭", "吉野家", "招牌盖饭", "寿喜烧风味肥牛饭", 490, 680, 26.0, 82.0, 24.0, 30.0),
+    ("茶碗蒸", "吉野家", "小食", "日式嫩滑蒸蛋", 120, 90, 6.0, 6.0, 4.5, 8.0),
 
-    # ── 乡村基 ──
-    ("香菇滑鸡饭", "乡村基", "招牌套餐", "香菇滑鸡+米饭+时蔬", 540, 610, 28.0, 78.0, 18.0, 24.0, "bento"),
-    ("宫保鸡丁饭", "乡村基", "招牌套餐", "宫保鸡丁+米饭+时蔬", 540, 680, 26.0, 82.0, 22.0, 24.0, "kungpao"),
-    ("双椒牛肉饭", "乡村基", "招牌套餐", "双椒牛肉+米饭+时蔬", 550, 700, 28.0, 80.0, 24.0, 26.0, "beef"),
-    ("酸菜肉丝面", "乡村基", "面食", "酸菜开胃，肉丝满盖", 450, 520, 18.0, 72.0, 16.0, 18.0, "noodle"),
 ]
 
 
@@ -379,37 +395,85 @@ class TakeoutStore:
             logger.error("创建外卖菜品/订单表失败: %s", exc)
 
     def _seed_builtin_dishes(self):
-        """填充内置连锁店家 + 菜单（仅首次; 可强制重建）。"""
+        """填充内置连锁店家 + 菜单（仅首次）。
+
+        品牌 logo 存 MinIO（bucket: takeout-images）, 店家 logo_url 与菜品
+        image_url 统一指向 ``/api/v1/takeout/images/{logo文件名}`` 由后端流式返回。
+        """
+        try:
+            from ..storage import upload_bytes, object_exists
+        except ImportError:
+            upload_bytes = None
+            object_exists = None
+
+        logo_urls: dict = {}
         try:
             with pg_cursor(commit=True) as cur:
                 # 店家表若为空则播种
                 cur.execute("SELECT COUNT(*) FROM takeout_shops")
                 if cur.fetchone()[0] == 0:
-                    for name, cat, sales, dmin, minp, fee, rating, slug in BUILTIN_SHOPS:
+                    for name, cat, sales, dmin, minp, fee, rating, logo_file in BUILTIN_SHOPS:
+                        # logo 上传 MinIO（若未上传过）
+                        logo_url = self._ensure_logo_in_minio(
+                            logo_file, upload_bytes, object_exists,
+                        )
+                        logo_urls[name] = logo_url
                         cur.execute("""
                             INSERT INTO takeout_shops
                                 (shop_name, category, monthly_sales, delivery_minutes,
                                  min_order_price, delivery_fee, rating, logo_url)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (shop_name) DO NOTHING
-                        """, (name, cat, sales, dmin, minp, fee, rating,
-                              _build_shop_logo_url(slug)))
+                        """, (name, cat, sales, dmin, minp, fee, rating, logo_url))
                     logger.info("已填充 %d 家内置连锁店家", len(BUILTIN_SHOPS))
+                else:
+                    # 已有店家: 读回 logo_url 供菜品使用
+                    cur.execute("SELECT shop_name, logo_url FROM takeout_shops")
+                    logo_urls = {r[0]: r[1] for r in cur.fetchall()}
 
                 cur.execute("SELECT COUNT(*) FROM takeout_dishes")
                 if cur.fetchone()[0] > 0:
                     return
-                for name, shop, cat, desc, amt, cal, pro, carb, fat, price, slug in BUILTIN_DISHES:
+                for name, shop, cat, desc, amt, cal, pro, carb, fat, price in BUILTIN_DISHES:
+                    # 菜品图片统一用店家品牌 logo
+                    dish_image = logo_urls.get(shop) or _logo_image_url(
+                        SHOP_LOGO_FILES.get(shop, "")
+                    ) if shop in SHOP_LOGO_FILES else None
                     cur.execute("""
                         INSERT INTO takeout_dishes
                             (dish_name, shop_name, category, description, amount_g, calories,
                              protein_g, carbs_g, fat_g, price, image_url, available)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
                     """, (name, shop, cat, desc, amt, cal, pro, carb, fat, price,
-                          _build_image_url(slug)))
+                          dish_image))
                 logger.info("已填充 %d 条内置外卖菜品", len(BUILTIN_DISHES))
         except Exception as exc:
             logger.error("填充外卖菜单失败: %s", exc)
+
+    @staticmethod
+    def _ensure_logo_in_minio(logo_file: str, upload_bytes=None, object_exists=None) -> str:
+        """确保品牌 logo 存在于 MinIO, 返回公开访问 URL。
+
+        - 对象 key: ``takeout/logos/{logo_file}``
+        - 本地无该文件时仅返回 URL（对象可能已在 MinIO）
+        """
+        url = _logo_image_url(logo_file)
+        key = f"takeout/logos/{logo_file}"
+        try:
+            if upload_bytes is None:
+                return url
+            if object_exists is not None and object_exists(key, bucket=TAKEOUT_BUCKET):
+                return url
+            loaded = _read_logo_bytes(logo_file)
+            if loaded is None:
+                logger.warning("本地缺少 logo 文件 %s, 跳过上传", logo_file)
+                return url
+            data, ctype = loaded
+            upload_bytes(key, data, ctype, bucket=TAKEOUT_BUCKET)
+            logger.info("品牌 logo 已上传 MinIO: %s", key)
+        except Exception as exc:
+            logger.error("上传品牌 logo 失败 %s: %s", logo_file, exc)
+        return url
 
     # ─── 菜品 CRUD ───
 
@@ -574,12 +638,14 @@ class TakeoutStore:
                 cur.execute("""
                     INSERT INTO takeout_orders
                         (user_id, dish_id, dish_name, shop_name, quantity, meal_type,
-                         include_in_stats, order_status, total_calories, total_protein_g, notes)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'confirmed', %s, %s, %s)
+                         include_in_stats, order_status, total_calories, total_protein_g,
+                         total_carbs_g, total_fat_g, notes)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'confirmed', %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
                     user_id, dish_id, dish.dish_name, dish.shop_name or "", qty, meal_type,
-                    include_in_stats, round(total_cal, 1), round(total_pro, 1), notes,
+                    include_in_stats, round(total_cal, 1), round(total_pro, 1),
+                    round(total_carbs, 1), round(total_fat, 1), notes,
                 ))
                 row = cur.fetchone()
                 order_id = row[0] if row else None
@@ -624,8 +690,8 @@ class TakeoutStore:
                 cur.execute("""
                     SELECT o.id, o.user_id, o.dish_id, o.dish_name, o.shop_name, o.quantity,
                            o.meal_type, o.include_in_stats, o.order_status,
-                           o.total_calories, o.total_protein_g, o.notes, o.created_at,
-                           d.image_url, d.category, d.price
+                           o.total_calories, o.total_protein_g, o.total_carbs_g, o.total_fat_g,
+                           o.notes, o.created_at, d.image_url, d.category, d.price
                     FROM takeout_orders o
                     LEFT JOIN takeout_dishes d ON d.id = o.dish_id
                     WHERE o.user_id = %s AND o.created_at >= %s
@@ -647,8 +713,8 @@ class TakeoutStore:
                 cur.execute("""
                     SELECT o.id, o.user_id, o.dish_id, o.dish_name, o.shop_name, o.quantity,
                            o.meal_type, o.include_in_stats, o.order_status,
-                           o.total_calories, o.total_protein_g, o.notes, o.created_at,
-                           d.image_url, d.category, d.price
+                           o.total_calories, o.total_protein_g, o.total_carbs_g, o.total_fat_g,
+                           o.notes, o.created_at, d.image_url, d.category, d.price
                     FROM takeout_orders o
                     LEFT JOIN takeout_dishes d ON d.id = o.dish_id
                     WHERE o.user_id = %s AND o.created_at >= %s
@@ -701,7 +767,9 @@ class TakeoutStore:
                         COALESCE(SUM(total_calories), 0) AS total_calories,
                         COALESCE(SUM(total_protein_g), 0) AS total_protein,
                         COALESCE(SUM(CASE WHEN include_in_stats THEN total_calories ELSE 0 END), 0) AS stats_calories,
-                        COALESCE(SUM(CASE WHEN include_in_stats THEN total_protein_g ELSE 0 END), 0) AS stats_protein
+                        COALESCE(SUM(CASE WHEN include_in_stats THEN total_protein_g ELSE 0 END), 0) AS stats_protein,
+                        COALESCE(SUM(CASE WHEN include_in_stats THEN total_carbs_g ELSE 0 END), 0) AS stats_carbs,
+                        COALESCE(SUM(CASE WHEN include_in_stats THEN total_fat_g ELSE 0 END), 0) AS stats_fat
                     FROM takeout_orders
                     WHERE user_id = %s AND created_at >= %s AND order_status = 'confirmed'
                 """, (user_id, today_start))
@@ -712,6 +780,8 @@ class TakeoutStore:
                     "total_protein_g": round(row[2], 1),
                     "stats_calories": round(row[3], 1),
                     "stats_protein_g": round(row[4], 1),
+                    "stats_carbs_g": round(row[5], 1),
+                    "stats_fat_g": round(row[6], 1),
                 }
         except Exception as exc:
             logger.error("查询今日外卖汇总失败: %s", exc)
@@ -735,6 +805,7 @@ class TakeoutStore:
             shop_name=row[4] or "",
             quantity=row[5], meal_type=row[6], include_in_stats=row[7],
             order_status=row[8], total_calories=row[9], total_protein_g=row[10],
-            notes=row[11], created_at=row[12],
-            image_url=row[13], category=row[14], price=row[15],
+            total_carbs_g=row[11] or 0.0, total_fat_g=row[12] or 0.0,
+            notes=row[13], created_at=row[14],
+            image_url=row[15], category=row[16], price=row[17],
         )

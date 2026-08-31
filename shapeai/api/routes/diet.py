@@ -206,9 +206,9 @@ async def get_daily_diet(req: Request, date: Optional[str] = None):
             "food_name": m["recipe_name"],
             "amount_g": None,
             "calories": m["total_calories"],
-            "protein_g": None,
-            "carbs_g": None,
-            "fat_g": None,
+            "protein_g": m.get("total_protein_g", 0),
+            "carbs_g": m.get("total_carbs_g", 0),
+            "fat_g": m.get("total_fat_g", 0),
             "recorded_at": m["consumed_at"],
             "image_url": None,
             "source": "fridge",
@@ -222,18 +222,30 @@ async def get_daily_diet(req: Request, date: Optional[str] = None):
 
     # 统计: diet 部分(仅 include_in_stats) + 冰箱餐次全计
     summary = _inject_real_budget(store.get_summary_by_date(user_id, date_str), user_id)
-    fridge_cal = sum(float(m.get("total_calories") or 0) for m in fridge_meals)
+    fridge_nutrition = {
+        "calories": sum(float(m.get("total_calories") or 0) for m in fridge_meals),
+        "protein_g": sum(float(m.get("total_protein_g") or 0) for m in fridge_meals),
+        "carbs_g": sum(float(m.get("total_carbs_g") or 0) for m in fridge_meals),
+        "fat_g": sum(float(m.get("total_fat_g") or 0) for m in fridge_meals),
+    }
+    fridge_cal = round(fridge_nutrition["calories"], 1)
     total_cal = round(float(summary.get("total_calories") or 0) + fridge_cal, 1)
     summary["total_calories"] = total_cal
+    summary["total_protein_g"] = round(float(summary.get("total_protein_g") or 0) + fridge_nutrition["protein_g"], 1)
+    summary["total_carbs_g"] = round(float(summary.get("total_carbs_g") or 0) + fridge_nutrition["carbs_g"], 1)
+    summary["total_fat_g"] = round(float(summary.get("total_fat_g") or 0) + fridge_nutrition["fat_g"], 1)
     if summary.get("remaining") is not None:
         summary["remaining"] = round(summary["remaining"] - fridge_cal, 1)
     if summary.get("budget"):
         summary["goal_achieved"] = total_cal >= summary["budget"]
-    summary["fridge_calories"] = round(fridge_cal, 1)
-    # 来源分布补冰箱
+    summary["fridge_calories"] = fridge_cal
+    # 来源分布补冰箱，保留四项营养数据供后续页面扩展。
     if "source_breakdown" in summary:
         summary["source_breakdown"]["fridge"] = {
-            "calories": round(fridge_cal, 1), "protein_g": 0,
+            "calories": fridge_cal,
+            "protein_g": round(fridge_nutrition["protein_g"], 1),
+            "carbs_g": round(fridge_nutrition["carbs_g"], 1),
+            "fat_g": round(fridge_nutrition["fat_g"], 1),
         }
 
     return {

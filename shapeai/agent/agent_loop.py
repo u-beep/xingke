@@ -12,6 +12,7 @@ import json
 import re
 import time
 import logging
+import threading
 
 from ..user_profile import PreferenceUpdater
 
@@ -130,53 +131,16 @@ class AgentLoop:
             agent.record({"role": "assistant", "content": final})
             agent.memory.add_message("assistant", final)
 
-            # ─── 饮食提取（不自动写入，交由前端确认）───
-            diet_data = None
-            if hasattr(agent, 'diet_extractor') and agent.diet_extractor:
-                try:
-                    diet_data = agent.diet_extractor.extract_only(
-                        user_id=agent.user_id,
-                        user_message=user_message,
-                        ai_response=final,
-                    )
-                except Exception as exc:
-                    logger.warning("饮食提取失败: %s", exc)
-
-            # 如果提取到食物数据，追加 JSON 标记供前端解析
-            if diet_data and diet_data.get("foods"):
-                import json as _json
-                marker = _json.dumps(diet_data, ensure_ascii=False)
-                final = final + f"\n\n[DIET_DATA]{marker}[/DIET_DATA]"
-                # 更新最后一条记录
-                if agent.session.get("history"):
-                    agent.session["history"][-1]["content"] = final
-                    agent.session_store.save(agent.session)
-
-            # ─── 饮水提取（不自动写入，交由前端确认）───
-            water_data = None
-            if hasattr(agent, 'hydration_extractor') and agent.hydration_extractor:
-                try:
-                    water_data = agent.hydration_extractor.extract_only(
-                        user_id=agent.user_id,
-                        user_message=user_message,
-                        ai_response=final,
-                    )
-                except Exception as exc:
-                    logger.warning("饮水提取失败: %s", exc)
-
-            # 如果提取到饮水量数据，追加 JSON 标记供前端解析
-            if water_data and water_data.get("amount_ml"):
-                import json as _json
-                marker = _json.dumps(water_data, ensure_ascii=False)
-                final = final + f"\n\n[WATER_DATA]{marker}[/WATER_DATA]"
-                # 更新最后一条记录
-                if agent.session.get("history"):
-                    agent.session["history"][-1]["content"] = final
-                    agent.session_store.save(agent.session)
-
             duration_ms = int((time.monotonic() - run_started_at) * 1000)
-            logger.info("Agent运行完成 tool_steps=%d retries=%d duration=%dms diet_extracted=%s water_extracted=%s",
-                        tool_steps, retries, duration_ms, diet_data is not None, water_data is not None)
+            logger.info("Agent运行完成 tool_steps=%d retries=%d duration=%dms",
+                        tool_steps, retries, duration_ms)
+
+            # ─── 异步提取：不阻塞主回复返回 ───
+            # 饮食/饮水提取不再同步等待（原先串行 2 次 LLM 往返拖慢首字返回），
+            # 改为提交到后台线程池，结果通过 agent.last_extract_result 暴露，
+            # 由 /chat/poll 或 /chat/extract 接口拉取。
+            self._submit_extraction(user_message, final)
+
             return final
 
         # 循环结束但未得到最终答案
@@ -188,6 +152,69 @@ class AgentLoop:
         agent.record({"role": "assistant", "content": final})
         agent.memory.add_message("assistant", final)
         return final
+
+    # ─────────────────────────────────────────────────────────────
+    #  异步提取（后台线程）
+    # ─────────────────────────────────────────────────────────────
+
+    def _submit_extraction(self, user_message: str, ai_response: str) -> None:
+        """把饮食/饮水提取提交到后台线程，不阻塞主回复返回。
+
+        优先使用 CombinedExtractor（一次 LLM 调用同时提取两类记录），
+        完成后把结果写入 agent.last_extract_result 供接口层拉取。
+        """
+        agent = self.agent
+        extractor = getattr(agent, "combined_extractor", None)
+        if extractor is None:
+            # 未配置合并提取器时回退：分别用两个提取器（仍异步，不阻塞返回）
+            diet_ex = getattr(agent, "diet_extractor", None)
+            water_ex = getattr(agent, "hydration_extractor", None)
+            if not diet_ex and not water_ex:
+                return
+
+            def _legacy_extract():
+                diet_data = None
+                water_data = None
+                try:
+                    if diet_ex:
+                        d = diet_ex.extract_only(user_id=agent.user_id, user_message=user_message, ai_response=ai_response)
+                        if d and d.get("foods"):
+                            diet_data = d
+                except Exception as exc:
+                    logger.warning("饮食提取失败: %s", exc)
+                try:
+                    if water_ex:
+                        w = water_ex.extract_only(user_id=agent.user_id, user_message=user_message, ai_response=ai_response)
+                        if w and w.get("amount_ml"):
+                            water_data = w
+                except Exception as exc:
+                    logger.warning("饮水提取失败: %s", exc)
+                if diet_data or water_data:
+                    agent.last_extract_result = {"diet_data": diet_data, "water_data": water_data}
+                else:
+                    agent.last_extract_result = {"diet_data": None, "water_data": None}
+
+            threading.Thread(target=_legacy_extract, daemon=True, name="extract_task").start()
+            return
+
+        def _run_extract():
+            try:
+                t0 = time.monotonic()
+                result = extractor.extract_only(
+                    user_id=agent.user_id,
+                    user_message=user_message,
+                    ai_response=ai_response,
+                )
+                agent.last_extract_result = result or {"diet_data": None, "water_data": None}
+                logger.info("后台提取完成 耗时=%.0fms has_diet=%s has_water=%s",
+                            (time.monotonic() - t0) * 1000,
+                            bool(result and result.get("diet_data")),
+                            bool(result and result.get("water_data")))
+            except Exception as exc:
+                logger.warning("后台提取失败: %s", exc)
+                agent.last_extract_result = {"diet_data": None, "water_data": None}
+
+        threading.Thread(target=_run_extract, daemon=True, name="extract_task").start()
 
     @staticmethod
     def _parse(raw: str) -> tuple[str, str | dict]:

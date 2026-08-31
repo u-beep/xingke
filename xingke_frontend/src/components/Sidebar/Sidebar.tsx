@@ -1,13 +1,12 @@
 import { NavLink } from 'react-router-dom'
 import {
   MessageSquareText,
-  LayoutDashboard,
   UtensilsCrossed,
   ShoppingBag,
   Refrigerator,
   Dumbbell,
+  Trophy,
   UserRound,
-  Settings,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
@@ -20,11 +19,11 @@ interface SidebarProps {
 
 const navItems = [
   { path: '/', label: 'AI对话', icon: MessageSquareText },
-  { path: '/dashboard', label: '身材仪表盘', icon: LayoutDashboard },
   { path: '/diet', label: '饮食记录', icon: UtensilsCrossed },
   { path: '/takeout', label: '外卖选购', icon: ShoppingBag },
   { path: '/fridge', label: '我的冰箱', icon: Refrigerator },
-  { path: '/exercise', label: '运动计划', icon: Dumbbell },
+  { path: '/exercise', label: '运动记录', icon: Dumbbell },
+  { path: '/activities', label: '活动', icon: Trophy },
   { path: '/profile', label: '我的档案', icon: UserRound },
 ]
 
@@ -59,27 +58,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           )
         })}
       </nav>
-
-      {/* 底部用户区 */}
-      <div className="sidebar__footer">
-        <div className="sidebar__user">
-          <div className="sidebar__avatar">
-            <img
-              src="https://api.dicebear.com/7.x/avataaars/svg?seed=xingke"
-              alt="头像"
-            />
-          </div>
-          {!collapsed && (
-            <div className="sidebar__user-info">
-              <span className="sidebar__user-name">陈晓东</span>
-              <span className="sidebar__user-settings">
-                <Settings size={14} /> 设置
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* 折叠按钮 */}
       <button className="sidebar__toggle" onClick={onToggle}>
         {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}

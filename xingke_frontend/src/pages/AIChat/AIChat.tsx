@@ -13,25 +13,58 @@ import {
   Copy,
   ThumbsUp,
   ThumbsDown,
+  ChevronLeft,
   PanelRightClose,
   PanelRightOpen,
   Flame,
-  Play,
   Check,
   TrendingDown,
   X,
   Loader2,
+  Square,
   Calendar,
   Dumbbell,
   Plus as PlusIcon,
   Trash,
   Droplets,
 } from 'lucide-react'
-import { mockTodayCalories, mockExerciseTask, mockGoalProgress } from '../../data/mockData'
+import { mockGoalProgress } from '../../data/mockData'
 import { useChat } from '../../store/ChatContext'
-import { exercisePlanApi, workoutApi, type ExerciseCalorieGroup, type WorkoutTemplateInfo, type PlanItem, type PlanSummary } from '../../services/api'
+import { exerciseApi, exercisePlanApi, workoutApi, type ExerciseCalorieGroup, type WorkoutTemplateInfo, type ExerciseRecordInfo, type PlanSummary } from '../../services/api'
 import CalendarPanel from '../../components/CalendarPanel/CalendarPanel'
 import './AIChat.css'
+
+// ============================================
+//  右侧信息栏卡片注册表（用户可自定义增删）
+// ============================================
+const PANEL_CARDS = [
+  { id: 'calorie', label: '今日热量' },
+  { id: 'water', label: '今日饮水' },
+  { id: 'plan', label: '运动计划' },
+  { id: 'burn', label: '运动热量消耗' },
+  { id: 'gap', label: '热量缺口' },
+  { id: 'goal', label: '目标进度' },
+]
+const ALL_CARD_IDS = PANEL_CARDS.map((c) => c.id)
+
+/** 按用户隔离持久化卡片展示配置 */
+function panelCardsStorageKey(): string {
+  return `xingke_panel_cards_${getCurrentUserId()}`
+}
+
+function loadVisibleCards(): string[] {
+  try {
+    const raw = localStorage.getItem(panelCardsStorageKey())
+    if (raw) {
+      const saved = JSON.parse(raw) as string[]
+      const valid = ALL_CARD_IDS.filter((id) => saved.includes(id))
+      if (valid.length > 0) return valid
+    }
+  } catch {
+    // 解析失败忽略，回退全量展示
+  }
+  return [...ALL_CARD_IDS]
+}
 
 interface Message {
   id: string
@@ -63,6 +96,7 @@ export default function AIChat() {
     dismissDiet,
     confirmWater,
     dismissWater,
+    stopGeneration,
   } = useChat()
 
   // 仅本页的 UI 局部状态
@@ -71,13 +105,26 @@ export default function AIChat() {
   const [showRecipeModal, setShowRecipeModal] = useState(false)
   const [showConfirmClear, setShowConfirmClear] = useState(false)
   const [rightPanelVisible, setRightPanelVisible] = useState(true)
+const [visibleCards, setVisibleCards] = useState<string[]>(loadVisibleCards)
+const [showCardPicker, setShowCardPicker] = useState(false)
   const [calendarVisible, setCalendarVisible] = useState(false)
-  const [exerciseDone, setExerciseDone] = useState(false)
   const [weightInput, setWeightInput] = useState('')
   const [recipeDays, setRecipeDays] = useState<'1' | '7'>('1')
   // 运动计划状态
   const [exerciseGroup, setExerciseGroup] = useState<ExerciseCalorieGroup | null>(null)
-  const [planSummary, setPlanSummary] = useState<PlanSummary>({ total_calories: 0, total_duration: 0, item_count: 0, items: [] })
+  const [planSummary, setPlanSummary] = useState<PlanSummary>({
+    total_calories: 0,
+    total_duration: 0,
+    completed_count: 0,
+    planned_calories: 0,
+    planned_duration: 0,
+    item_count: 0,
+    items: [],
+  })
+  const [exerciseRecords, setExerciseRecords] = useState<ExerciseRecordInfo[]>([])
+  const [exercisePanelTab, setExercisePanelTab] = useState<'plan' | 'history'>('plan')
+  const [confirmingPlanItem, setConfirmingPlanItem] = useState<PlanSummary['items'][number] | null>(null)
+  const [completingPlanItemId, setCompletingPlanItemId] = useState<number | null>(null)
   const [selectedType, setSelectedType] = useState<string>('cardio')
   const [selectedExercise, setSelectedExercise] = useState<string>('')
   const [duration, setDuration] = useState<number>(30)
@@ -119,20 +166,54 @@ export default function AIChat() {
     workoutApi.listTemplates(getCurrentUserId()).then(res => setTemplates(res.templates || [])).catch(() => {})
   }, [])
 
-  // 加载今日运动计划
-  const loadExercisePlan = async (date?: string) => {
+/** 切换右侧信息栏卡片展示状态（持久化到 localStorage） */
+const togglePanelCard = (id: string) => {
+  setVisibleCards((prev) => {
+    const next = prev.includes(id)
+      ? prev.filter((c) => c !== id)
+      : ALL_CARD_IDS.filter((c) => prev.includes(c) || c === id)
+    try {
+      localStorage.setItem(panelCardsStorageKey(), JSON.stringify(next))
+    } catch {
+      // 存储不可用忽略
+    }
+    return next
+  })
+}
+
+// 加载今日运动计划
+const loadExercisePlan = async (date?: string) => {
     try {
       const summary = date
-        ? await exercisePlanApi.byDate('user_web_001', date)
-        : await exercisePlanApi.today('user_web_001')
-      setPlanSummary(summary)
+        ? await exercisePlanApi.byDate(getCurrentUserId(), date)
+        : await exercisePlanApi.today(getCurrentUserId())
+      setPlanSummary({
+        ...summary,
+        total_calories: summary.total_calories || 0,
+        total_duration: summary.total_duration || 0,
+        completed_count: summary.completed_count || 0,
+        planned_calories: summary.planned_calories || 0,
+        planned_duration: summary.planned_duration || 0,
+        item_count: summary.item_count || 0,
+        items: summary.items || [],
+      })
+    } catch {
+      // 静默失败
+    }
+  }
+
+  const loadExerciseRecords = async () => {
+    try {
+      const result = await exerciseApi.history()
+      setExerciseRecords(result.records || [])
     } catch {
       // 静默失败
     }
   }
 
   useEffect(() => {
-    loadExercisePlan()
+    loadExercisePlan(isViewingHistory ? currentDate : undefined)
+    loadExerciseRecords()
   }, [currentDate])
 
   // 运动类型中文映射
@@ -146,6 +227,13 @@ export default function AIChat() {
   const totalBurn = bmr + exerciseCalories
   const calorieGap = Math.round(totalBurn - intakeCalories)
 
+  // 运动消耗完成度：已完成消耗相对计划预计的比例。
+  const exerciseBurnPercent = planSummary.planned_calories > 0
+    ? Math.min(100, Math.round((exerciseCalories / planSummary.planned_calories) * 100))
+    : exerciseCalories > 0
+      ? 100
+      : 0
+
   const handleAddExercise = async () => {
     if (!selectedExercise) return
     try {
@@ -154,7 +242,7 @@ export default function AIChat() {
         exercise_name: selectedExercise,
         duration_min: duration,
       })
-      await loadExercisePlan()
+      await loadExercisePlan(isViewingHistory ? currentDate : undefined)
     } catch {
       // 静默失败
     }
@@ -163,7 +251,7 @@ export default function AIChat() {
   const handleApplyTemplate = async (templateId: number) => {
     try {
       await workoutApi.applyTemplate(templateId)
-      await loadExercisePlan()
+      await loadExercisePlan(isViewingHistory ? currentDate : undefined)
     } catch {
       // 静默失败
     }
@@ -172,7 +260,7 @@ export default function AIChat() {
   const handleDeleteTemplate = async (templateId: number) => {
     try {
       await workoutApi.deleteTemplate(templateId)
-      const res = await workoutApi.listTemplates('user_web_001')
+      const res = await workoutApi.listTemplates(getCurrentUserId())
       setTemplates(res.templates || [])
     } catch {
       // 静默失败
@@ -193,7 +281,7 @@ export default function AIChat() {
       })
       setTemplateName('')
       setShowSaveTemplate(false)
-      const res = await workoutApi.listTemplates('user_web_001')
+      const res = await workoutApi.listTemplates(getCurrentUserId())
       setTemplates(res.templates || [])
     } catch {
       // 静默失败
@@ -203,9 +291,27 @@ export default function AIChat() {
   const handleDeleteExercise = async (itemId: number) => {
     try {
       await exercisePlanApi.deleteItem(itemId)
-      await loadExercisePlan()
+      await loadExercisePlan(isViewingHistory ? currentDate : undefined)
     } catch {
       // 静默失败
+    }
+  }
+
+  const handleConfirmExerciseComplete = async () => {
+    if (!confirmingPlanItem) return
+    setCompletingPlanItemId(confirmingPlanItem.id)
+    try {
+      const result = await exercisePlanApi.completeItem(confirmingPlanItem.id)
+      if (!result.success) return
+      setConfirmingPlanItem(null)
+      await Promise.all([
+        loadExercisePlan(isViewingHistory ? currentDate : undefined),
+        loadExerciseRecords(),
+      ])
+    } catch {
+      // 请求失败时保留确认弹窗，便于用户重试或取消。
+    } finally {
+      setCompletingPlanItemId(null)
     }
   }
 
@@ -287,6 +393,17 @@ export default function AIChat() {
       {/* 日历面板 */}
       <CalendarPanel visible={calendarVisible} />
 
+      {/* 日历收起把手（仅日历展开时显示，重新展开用顶栏的日历按钮） */}
+      {calendarVisible && (
+        <button
+          className="calendar-toggle-btn calendar-toggle-btn--open"
+          onClick={() => setCalendarVisible(false)}
+          title="收起日历"
+        >
+          <ChevronLeft size={14} />
+        </button>
+      )}
+
       {/* 文件上传隐藏input */}
       <input
         ref={fileInputRef}
@@ -308,19 +425,12 @@ export default function AIChat() {
             >
               <Calendar size={18} />
             </button>
-            <div>
-              <h2 className="chat-header__title">
-                {isViewingHistory ? `${currentDate} 历史对话` : '我的专属身材管家'}
-              </h2>
-              <span className="chat-header__subtitle">
-                {isViewingHistory
-                  ? '查看历史记录 · 切回今天可继续对话'
-                  : sessionId
-                    ? `会话ID: ${sessionId.slice(0, 8)}... · 已同步你的最新身体数据`
-                    : '已同步你的最新身体数据'
-                }
-              </span>
-            </div>
+{isViewingHistory && (
+  <div>
+    <h2 className="chat-header__title">{`${currentDate} 历史对话`}</h2>
+    <span className="chat-header__subtitle">查看历史记录 · 切回今天可继续对话</span>
+  </div>
+)}
           </div>
           <div className="chat-header__actions">
             {isViewingHistory && (
@@ -332,16 +442,13 @@ export default function AIChat() {
                 回到今天
               </button>
             )}
-            <button className="btn btn-ghost chat-header__btn">
-              <Flag size={14} /> 反馈问题
-            </button>
-            <button
-              className="btn btn-ghost chat-header__btn"
-              onClick={() => setShowConfirmClear(true)}
-              disabled={isViewingHistory}
-            >
-              <Trash2 size={14} /> 清空对话
-            </button>
+<button
+  className="btn btn-ghost chat-header__btn"
+  onClick={() => setShowConfirmClear(true)}
+  disabled={isViewingHistory}
+>
+  <Trash2 size={14} /> 清空对话
+</button>
             <button
               className="chat-header__panel-toggle"
               onClick={() => setRightPanelVisible(!rightPanelVisible)}
@@ -404,32 +511,41 @@ export default function AIChat() {
             <button className="chat-input__mic" title="语音输入">
               <Mic size={18} />
             </button>
-            <button
-              className={`chat-input__send ${input.trim() && !loading ? 'active' : ''}`}
-              onClick={handleSend}
-              disabled={!input.trim() || loading}
-              title="发送 (Enter)"
-            >
-              {loading ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
-            </button>
-          </div>
-          <div className="chat-input__hint">
-            按 <kbd>Enter</kbd> 发送，<kbd>Ctrl + Enter</kbd> 换行
-          </div>
-        </div>
-      </div>
+            {loading ? (
+              <button
+                className="chat-input__send chat-input__send--stop active"
+                onClick={stopGeneration}
+                title="停止生成"
+                aria-label="停止生成"
+              >
+                <Square size={13} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                className={`chat-input__send ${input.trim() ? 'active' : ''}`}
+                onClick={handleSend}
+                disabled={!input.trim()}
+                title="发送 (Enter)"
+              >
+                <Send size={18} />
+              </button>
+            )}
+</div>
+</div>
+</div>
 
       {/* 右侧常驻快捷信息栏 */}
       {rightPanelVisible && (
         <div className="info-panel">
           {/* 今日热量卡片 */}
+          {visibleCards.includes('calorie') && (
           <div className="info-card card">
             <div className="info-card__header">
               <span className="info-card__title">
                 <Flame size={16} /> {currentDate.slice(5)} 热量
               </span>
-              <span className="info-card__link">详情 →</span>
-            </div>
+<span className="info-card__link">详情 →</span>
+</div>
             <div className="calorie-ring">
               <svg viewBox="0 0 120 120" className="calorie-ring__svg">
                 <circle cx="60" cy="60" r="50" fill="none" stroke="#fff3c4" strokeWidth="10" />
@@ -510,8 +626,10 @@ export default function AIChat() {
               </div>
             </div>
           </div>
+          )}
 
           {/* 今日喝水量可视化卡片（动态水杯动画） */}
+          {visibleCards.includes('water') && (
           <div className="info-card card water-card">
             <div className="info-card__header">
               <span className="info-card__title">
@@ -519,9 +637,9 @@ export default function AIChat() {
               </span>
               <span className="info-card__link">
                 {waterSummary.record_count > 0 ? `${waterSummary.record_count} 次` : '今日未记录'}
-              </span>
-            </div>
-            <div className="water-cup">
+</span>
+</div>
+              <div className="water-cup">
               <div className="water-cup__glass">
                 <div
                   className="water-cup__water"
@@ -581,20 +699,48 @@ export default function AIChat() {
                 : '在对话中输入"刚喝了 300ml 水"，AI 将自动识别并计入今日饮水。'}
             </div>
           </div>
+          )}
 
           {/* 今日运动计划卡片 */}
+          {visibleCards.includes('plan') && (
           <div className="info-card card">
             <div className="info-card__header">
               <span className="info-card__title">
                 <Dumbbell size={16} /> {currentDate.slice(5)} 运动计划
               </span>
-              {planSummary.items.length > 0 && (
-                <span className="info-card__link" onClick={() => exercisePlanApi.clearToday('user_web_001').then(() => loadExercisePlan())}>
+              {exercisePanelTab === 'plan' && planSummary.items.length > 0 && !isViewingHistory && (
+                <button
+                  type="button"
+                  className="info-card__link"
+                  onClick={() => exercisePlanApi.clearToday(getCurrentUserId()).then(() => loadExercisePlan())}
+                >
                   清空
-                </span>
-              )}
+                </button>
+)}
+</div>
+
+            <div className="exercise-panel-tabs" role="tablist" aria-label="运动内容">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={exercisePanelTab === 'plan'}
+                className={`exercise-panel-tab ${exercisePanelTab === 'plan' ? 'exercise-panel-tab--active' : ''}`}
+                onClick={() => setExercisePanelTab('plan')}
+              >
+                运动计划
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={exercisePanelTab === 'history'}
+                className={`exercise-panel-tab ${exercisePanelTab === 'history' ? 'exercise-panel-tab--active' : ''}`}
+                onClick={() => setExercisePanelTab('history')}
+              >
+                消耗记录
+              </button>
             </div>
 
+            {exercisePanelTab === 'plan' ? <>
             {/* 运动方案模板选择区 */}
             {templates.length > 0 && (
               <div className="template-section">
@@ -721,38 +867,106 @@ export default function AIChat() {
                     </div>
                     <div className="plan-item__right">
                       <span className="plan-item__calories">{Math.round(item.calories_burned)}kcal</span>
-                      <button
-                        className="plan-item__delete"
-                        onClick={() => handleDeleteExercise(item.id)}
-                      >
-                        <Trash size={12} />
-                      </button>
+                      {item.completed ? (
+                        <span className="plan-item__completed"><Check size={12} /> 已完成</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="plan-item__complete"
+                          onClick={() => setConfirmingPlanItem(item)}
+                        >
+                          完成
+                        </button>
+                      )}
+                      {!item.completed && (
+                        <button
+                          type="button"
+                          className="plan-item__delete"
+                          onClick={() => handleDeleteExercise(item.id)}
+                          aria-label={`删除${item.exercise_name}`}
+                        >
+                          <Trash size={12} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* 运动热量统计 */}
-            <div className="exercise-summary">
-              <div className="exercise-summary__row">
-                <span className="exercise-summary__label">预计运动消耗</span>
-                <span className="exercise-summary__value">{Math.round(exerciseCalories)} kcal</span>
+            {/* 已完成运动才计入热量消耗，统计统一在下方运动热量消耗卡片展示 */}
+            </> : (
+              <div className="exercise-history-list" role="tabpanel">
+                {exerciseRecords.length > 0 ? exerciseRecords.map((record) => (
+                  <div key={record.id} className="exercise-history-item">
+                    <div className="exercise-history-item__main">
+                      <span
+                        className="plan-item__type-dot"
+                        style={{ background: typeColors[record.exercise_type || ''] || '#5b9bd5' }}
+                      />
+                      <div>
+                        <div className="exercise-history-item__name">{record.exercise_name}</div>
+                        <div className="exercise-history-item__meta">
+                          {record.scheduled_date || '今日'} · {record.duration_min || 0} min
+                        </div>
+                      </div>
+                    </div>
+                    <strong className="exercise-history-item__calories">+{Math.round(record.calories_burned || 0)} kcal</strong>
+                  </div>
+                )) : (
+                  <div className="exercise-history-empty">完成运动后，消耗热量会记录在这里。</div>
+                )}
               </div>
-              <div className="exercise-summary__row">
-                <span className="exercise-summary__label">总时长</span>
-                <span className="exercise-summary__value">{planSummary.total_duration} min</span>
-              </div>
-            </div>
+            )}
           </div>
+          )}
 
-          {/* 今日热量缺口卡片 */}
+          {/* 运动热量消耗卡片 */}
+          {visibleCards.includes('burn') && (
           <div className="info-card card">
             <div className="info-card__header">
               <span className="info-card__title">
-                <Flame size={16} /> 今日热量缺口
+<Dumbbell size={16} /> {currentDate.slice(5)} 运动热量消耗
               </span>
             </div>
+            <div className="calorie-gap exercise-burn">
+              <div className="calorie-gap__value positive">
+                {Math.round(exerciseCalories)}
+                <span className="calorie-gap__unit">kcal</span>
+              </div>
+              <div className="calorie-gap__bar">
+                <div
+                  className="calorie-gap__fill positive"
+                  style={{ width: `${exerciseBurnPercent}%` }}
+                />
+              </div>
+              <div className="calorie-gap__detail">
+                <div className="calorie-gap__row">
+                  <span>已完成项目</span>
+                  <span>{planSummary.completed_count}/{planSummary.item_count} 项</span>
+                </div>
+                <div className="calorie-gap__row">
+                  <span>完成时长</span>
+                  <span>{planSummary.total_duration} min</span>
+                </div>
+                <div className="calorie-gap__row calorie-gap__row--total">
+                  <span>计划预计消耗</span>
+                  <span>{Math.round(planSummary.planned_calories)} kcal</span>
+                </div>
+              </div>
+              <div className="exercise-burn__hint">确认完成的运动才会计入热量消耗</div>
+            </div>
+          </div>
+          )}
+
+          {/* 今日热量缺口卡片 */}
+          {visibleCards.includes('gap') && (
+          <div className="info-card card">
+            <div className="info-card__header">
+              <span className="info-card__title">
+<Flame size={16} /> 今日热量缺口
+                </span>
+              </div>
             <div className="calorie-gap">
               <div className={`calorie-gap__value ${calorieGap >= 0 ? 'positive' : 'negative'}`}>
                 {calorieGap >= 0 ? '+' : ''}{calorieGap}
@@ -784,14 +998,16 @@ export default function AIChat() {
               </div>
             </div>
           </div>
+          )}
 
           {/* 目标进度卡片 */}
+          {visibleCards.includes('goal') && (
           <div className="info-card card">
             <div className="info-card__header">
               <span className="info-card__title">
-                <TrendingDown size={16} /> 目标进度
-              </span>
-            </div>
+<TrendingDown size={16} /> 目标进度
+                </span>
+              </div>
             <div className="goal-progress">
               <div className="goal-progress__bar">
                 <div
@@ -818,6 +1034,12 @@ export default function AIChat() {
               </div>
             </div>
           </div>
+          )}
+
+          {/* 添加卡片入口 */}
+          <button className="info-card-add" onClick={() => setShowCardPicker(true)}>
+            <Plus size={14} /> 添加卡片
+          </button>
         </div>
       )}
 
@@ -873,6 +1095,64 @@ export default function AIChat() {
               onClick={handleGenerateRecipe}
             >
               确认生成
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* 运动完成确认弹窗 */}
+      {confirmingPlanItem && (
+        <Modal title="确认完成运动" onClose={() => !completingPlanItemId && setConfirmingPlanItem(null)}>
+          <div className="confirm-modal exercise-complete-modal">
+            <Dumbbell size={32} className="exercise-complete-modal__icon" />
+            <p className="confirm-modal__text">确认已完成「{confirmingPlanItem.exercise_name}」？</p>
+            <p className="confirm-modal__subtext">
+              本次将计入 {confirmingPlanItem.duration_min} 分钟、{Math.round(confirmingPlanItem.calories_burned)} kcal 运动消耗。
+            </p>
+            <div className="confirm-modal__actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={completingPlanItemId === confirmingPlanItem.id}
+                onClick={() => setConfirmingPlanItem(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={completingPlanItemId === confirmingPlanItem.id}
+                onClick={handleConfirmExerciseComplete}
+              >
+                {completingPlanItemId === confirmingPlanItem.id ? <><Loader2 size={14} className="spin" /> 保存中</> : <><Check size={14} /> 确认完成</>}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* 自定义卡片弹窗 */}
+      {showCardPicker && (
+        <Modal title="自定义卡片" onClose={() => setShowCardPicker(false)}>
+          <div className="card-picker">
+            <p className="card-picker__desc">勾选需要在右侧信息栏展示的卡片：</p>
+            <div className="card-picker__list">
+              {PANEL_CARDS.map((card) => (
+                <label key={card.id} className="card-picker__item">
+                  <input
+                    type="checkbox"
+                    checked={visibleCards.includes(card.id)}
+                    onChange={() => togglePanelCard(card.id)}
+                  />
+                  <span className="card-picker__name">{card.label}</span>
+                  <em className={visibleCards.includes(card.id) ? 'card-picker__state card-picker__state--on' : 'card-picker__state'}>
+                    {visibleCards.includes(card.id) ? '展示中' : '未展示'}
+                  </em>
+                </label>
+              ))}
+            </div>
+            <button className="btn btn-primary card-picker__done" onClick={() => setShowCardPicker(false)}>
+              完成
             </button>
           </div>
         </Modal>

@@ -41,10 +41,63 @@
 }
 
 .takeout-summary__label {
-  display: block;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-top: 2px;
+display: block;
+font-size: 12px;
+color: var(--text-tertiary);
+margin-top: 2px;
+}
+
+/* ─── 左侧品类竖排导航 + 右侧内容（参考「我的冰箱」两栏布局） ─── */
+.takeout__body {
+display: flex;
+gap: 14px;
+align-items: flex-start;
+}
+
+.takeout__cat-nav {
+flex: 0 0 150px;
+display: flex;
+flex-direction: column;
+gap: 4px;
+background: var(--bg-card);
+border: 1px solid var(--border-light);
+border-radius: var(--radius-lg);
+padding: 10px 8px;
+position: sticky;
+top: 0;
+}
+
+.takeout-cat {
+padding: 10px 14px;
+border: none;
+border-radius: var(--radius-md);
+background: transparent;
+color: var(--text-secondary);
+font-size: 13px;
+font-weight: 500;
+text-align: left;
+cursor: pointer;
+flex-shrink: 0;
+transition: all var(--transition);
+}
+
+.takeout-cat:hover {
+background: var(--bg-page);
+color: var(--text-primary);
+}
+
+.takeout-cat--active {
+background: var(--mint-500);
+color: #0d1f1c;
+font-weight: 600;
+}
+
+.takeout__main {
+flex: 1;
+min-width: 0;
+display: flex;
+flex-direction: column;
+gap: 14px;
 }
 
 /* ─── 分类筛选 ─── */
@@ -570,23 +623,34 @@
 
 /* ─── 响应式 ─── */
 @media (max-width: 768px) {
-  .takeout {
-    padding: 16px;
-  }
+.takeout {
+padding: 16px;
+}
 
-  .takeout__summary {
-    gap: 16px;
-    padding: 16px;
-  }
+.takeout__summary {
+gap: 16px;
+padding: 16px;
+}
 
-  .takeout-summary__item {
-    min-width: calc(50% - 8px);
-  }
+.takeout-summary__item {
+min-width: calc(50% - 8px);
+}
 
-  .takeout-group__grid {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 12px;
-  }
+.takeout__body {
+flex-direction: column;
+}
+
+.takeout__cat-nav {
+flex: none;
+flex-direction: row;
+flex-wrap: wrap;
+width: 100%;
+}
+
+.takeout-group__grid {
+grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+gap: 12px;
+}
 
   .dish-card__img {
     height: 120px;

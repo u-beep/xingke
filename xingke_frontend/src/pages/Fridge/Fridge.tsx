@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Refrigerator,
   Camera,
@@ -14,6 +15,9 @@ import {
   ChefHat,
   RefreshCw,
   Flame,
+  Beef,
+  Wheat,
+  Droplet,
 } from 'lucide-react'
 import {
   fridgeApi,
@@ -22,17 +26,21 @@ import {
   type FridgeRecipe,
   type FridgeRecognizedItem,
 } from '../../services/api'
+import { authedImageUrl } from '../../services/authStore'
 import './Fridge.css'
 
 const CATEGORIES = ['蔬菜', '肉蛋', '主食', '水果', '乳制品', '调味', '其他']
 
 const UNITS = ['g', '个', '包', 'ml']
 
-/** ISO分钟格式 → "MM-DD HH:MM" */
+/** 快捷偏好下拉选项（与输入框互斥：选中选项后输入框置灰；输入框有内容后下拉框置灰） */
+const PREF_CHIP_OPTIONS = ['快手菜', '凉菜', '减脂餐', '家常菜', '默认']
+
+/** ISO分钟格式 → "YYYY-MM-DD HH:MM" */
 function fmtMin(iso?: string | null): string {
   if (!iso) return ''
   const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/)
-  return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : iso
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : iso
 }
 
 /** 过期状态: none(无)/ok(正常)/soon(24h内)/over(已过期) */
@@ -75,9 +83,11 @@ function defaultItemForm(): ItemForm {
 }
 
 export default function Fridge() {
+  // 分类筛选同步 URL ?category=（刷新后保持）
+  const [searchParams, setSearchParams] = useSearchParams()
   const [items, setItems] = useState<FridgeItemInfo[]>([])
   const [categories, setCategories] = useState<string[]>([])
-  const [activeCategory, setActiveCategory] = useState<string>('')
+  const [activeCategory, setActiveCategoryState] = useState<string>(() => searchParams.get('category') || '')
   const [loading, setLoading] = useState(true)
 
   // 拍照识别
@@ -92,35 +102,132 @@ export default function Fridge() {
   const [savingItem, setSavingItem] = useState(false)
 
   // 菜谱推荐
-  const [recipes, setRecipes] = useState<FridgeRecipe[] | null>(null)
-  const [loadingRecipes, setLoadingRecipes] = useState(false)
+const [recipes, setRecipes] = useState<FridgeRecipe[] | null>(null)
+const [loadingRecipes, setLoadingRecipes] = useState(false)
+// 推荐时返回的全量冰箱快照：用料“缺/有”判断以整个冰箱为准，不受左侧 tab 分类筛选影响
+const [fridgeSnapshot, setFridgeSnapshot] = useState<FridgeItemInfo[]>([])
   const [confirming, setConfirming] = useState<string | null>(null) // recipe name
   const [preferences, setPreferences] = useState('')
+// 当前选中的快捷偏好选项（'默认'=无偏好，不附加任何额外提示词；其余直接作为偏好传给后端）
+const [prefChip, setPrefChip] = useState<string>('默认')
 
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null)
+  // 删除确认弹窗（替代原生 confirm）
+  const [deleting, setDeleting] = useState<FridgeItemInfo | null>(null)
+  const [deletingInProgress, setDeletingInProgress] = useState(false)
+  // 左侧分类导航容器（高亮项自动滚动到可视区域）
+  const catNavRef = useRef<HTMLDivElement>(null)
+  // 右侧食材列表滚动容器（切换分类时滚回顶部）
+  const itemsScrollRef = useRef<HTMLDivElement>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
+  const pendingScrollRestore = useRef<{
+    anchorId?: string
+    fallbackAnchorId?: string
+    anchorOffset: number
+    scrollTop: number
+  } | null>(null)
 
   useEffect(() => {
-    fetchItems()
+    fetchItems(true)
   }, [])
 
   useEffect(() => {
-    if (activeCategory) {
-      fridgeApi.list(activeCategory).then((r) => setItems(r.items))
-    } else {
-      fetchItems()
+    // 过期筛选为纯前端过滤，请求全量数据即可
+    const isExpiryFilter = activeCategory === '__expiring__' || activeCategory === '__expired__'
+    fetchItems(false, isExpiryFilter ? undefined : activeCategory || undefined)
+  }, [activeCategory])
+
+  // 高亮分类变化时，自动滚动左侧导航使其保持在可视区域内（仅滚动导航自身）
+  useEffect(() => {
+    const nav = catNavRef.current
+    const btn = nav?.querySelector<HTMLElement>('.fridge-cat--active')
+    if (!nav || !btn) return
+    const navRect = nav.getBoundingClientRect()
+    const btnRect = btn.getBoundingClientRect()
+    if (btnRect.top < navRect.top) {
+      nav.scrollTop += btnRect.top - navRect.top - 4
+    } else if (btnRect.bottom > navRect.bottom) {
+      nav.scrollTop += btnRect.bottom - navRect.bottom + 4
     }
   }, [activeCategory])
 
-  const fetchItems = async () => {
-    setLoading(true)
+  // DOM 已提交新食材列表后再恢复锚点，避免异步刷新产生视觉跳动。
+  useLayoutEffect(() => {
+    const restore = pendingScrollRestore.current
+    const root = pageRef.current
+    if (!restore || !root) return
+    // 滚动发生在右侧食材列表区，而非整页
+    const scrollContainer = root.querySelector<HTMLElement>('.fridge__items') ?? root
+
+    pendingScrollRestore.current = null
+    const nextAnchor = restore.anchorId
+      ? scrollContainer.querySelector<HTMLElement>(`[data-fridge-item-id="${restore.anchorId}"]`)
+        ?? (restore.fallbackAnchorId
+          ? scrollContainer.querySelector<HTMLElement>(`[data-fridge-item-id="${restore.fallbackAnchorId}"]`)
+          : null)
+      : null
+    if (nextAnchor) {
+      const nextOffset = nextAnchor.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top
+      scrollContainer.scrollTop += nextOffset - restore.anchorOffset
+    } else {
+      scrollContainer.scrollTop = Math.min(
+        restore.scrollTop,
+        Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight),
+      )
+    }
+  }, [items, categories])
+
+  /** 切换分类: 同步 URL（刷新后保持），并回到列表顶部 */
+  const setActiveCategory = (c: string) => {
+    setActiveCategoryState(c)
+    // 切换后回到列表顶部：给出明确的视觉反馈，
+    // 也让 fetchItems 的锚点恢复从顶部开始记录，避免停在旧位置
+    itemsScrollRef.current?.scrollTo({ top: 0 })
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (c) next.set('category', c)
+        else next.delete('category')
+        return next
+      },
+      { replace: true },
+    )
+  }
+
+  /**
+   * 刷新食材时保持用户当前阅读位置。
+   * 首次加载才显示整页 loading；后续增删改后的静默刷新不会清空列表，
+   * 同时用当前可见的食材卡片作为锚点恢复偏移，避免列表重排造成跳动。
+   */
+const fetchItems = async (initial = false, category?: string) => {
+const root = pageRef.current
+// 滚动发生在右侧食材列表区，而非整页
+const scrollContainer = root?.querySelector<HTMLElement>('.fridge__items') ?? root
+    if (!initial && scrollContainer) {
+      const containerTop = scrollContainer.getBoundingClientRect().top
+      const cards = Array.from(scrollContainer.querySelectorAll<HTMLElement>('[data-fridge-item-id]'))
+      const anchorIndex = cards.findIndex((card) => card.getBoundingClientRect().bottom > containerTop)
+      const anchor = anchorIndex >= 0 ? cards[anchorIndex] : undefined
+      // 删除当前锚点时，优先以它的下一项（末项则上一项）继续保持相对位置。
+      const fallback = anchorIndex >= 0 ? cards[anchorIndex + 1] ?? cards[anchorIndex - 1] : undefined
+      pendingScrollRestore.current = {
+        anchorId: anchor?.dataset.fridgeItemId,
+        fallbackAnchorId: fallback?.dataset.fridgeItemId,
+        anchorOffset: anchor ? anchor.getBoundingClientRect().top - containerTop : 0,
+        scrollTop: scrollContainer.scrollTop,
+      }
+    }
+
+    if (initial) setLoading(true)
     try {
-      const result = await fridgeApi.list()
+      const result = await fridgeApi.list(category)
       setItems(result.items)
       setCategories(result.categories)
     } catch (err) {
+      pendingScrollRestore.current = null
       console.error('获取冰箱食材失败:', err)
     } finally {
-      setLoading(false)
+      if (initial) setLoading(false)
     }
   }
 
@@ -210,24 +317,37 @@ export default function Fridge() {
     }
   }
 
-  const handleDelete = async (item: FridgeItemInfo) => {
-    if (!confirm(`确认删除「${item.name}」？`)) return
-    try {
-      await fridgeApi.remove(item.id)
-      showToast('已删除', true)
-      await fetchItems()
-    } catch (err) {
-      showToast('删除失败：服务异常', false)
-    }
-  }
+/** 点击删除：弹出应用内确认弹窗（替代原生 confirm） */
+const handleDelete = (item: FridgeItemInfo) => {
+setDeleting(item)
+}
 
-  // ─── 菜谱推荐 ───
-  const handleRecommend = async () => {
-    setLoadingRecipes(true)
-    setRecipes(null)
-    try {
-      const result = await fridgeApi.recommendRecipes(preferences)
-      setRecipes(result.recipes)
+/** 确认删除 */
+const confirmDelete = async () => {
+if (!deleting) return
+setDeletingInProgress(true)
+try {
+await fridgeApi.remove(deleting.id)
+showToast('已删除', true)
+setDeleting(null)
+await fetchItems()
+} catch (err) {
+showToast('删除失败：服务异常', false)
+} finally {
+setDeletingInProgress(false)
+}
+}
+
+// ─── 菜谱推荐 ───
+const handleRecommend = async () => {
+  // 互斥取值：选中选项时优先用选项（“默认”传空），否则用输入内容
+  const pref = prefChip && prefChip !== '默认' ? prefChip : preferences.trim()
+  setLoadingRecipes(true)
+  setRecipes(null)
+  try {
+const result = await fridgeApi.recommendRecipes(pref)
+setRecipes(result.recipes)
+setFridgeSnapshot(result.fridge_snapshot || [])
       if (result.recipes.length === 0) {
         showToast(result.message || (result.raw ? 'AI 返回无法解析，已展示原文' : '暂无可推荐菜谱'), false)
       }
@@ -246,8 +366,8 @@ export default function Fridge() {
         const warns = [...result.insufficient, ...result.missing]
         showToast(
           warns.length
-            ? `已扣减库存（${warns.map((w) => w.name).join('、')} 不足/缺失）`
-            : '库存扣减完成，用料充足',
+            ? `已记录到饮食记录并扣减库存（${warns.map((w) => w.name).join('、')} 不足/缺失）`
+            : '已记录到饮食记录，库存扣减完成',
           warns.length ? false : true,
         )
         setRecipes(null)
@@ -262,23 +382,36 @@ export default function Fridge() {
     }
   }
 
-  const fridgeNames = useMemo(() => new Set(items.map((i) => i.name)), [items])
+  const fridgeNames = useMemo(() => new Set(fridgeSnapshot.map((i) => i.name)), [fridgeSnapshot])
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, FridgeItemInfo[]>()
-    for (const it of items) {
-      const cat = it.category || '未分类'
-      if (!map.has(cat)) map.set(cat, [])
-      map.get(cat)!.push(it)
-    }
-    return Array.from(map.entries())
-  }, [items])
+const filteredItems = useMemo(() => {
+if (activeCategory === '__expiring__') return items.filter((i) => expireState(i.expires_at) === 'soon')
+if (activeCategory === '__expired__') return items.filter((i) => expireState(i.expires_at) === 'over')
+if (activeCategory) return items.filter((i) => (i.category || '未分类') === activeCategory)
+return items
+}, [items, activeCategory])
 
-  const totalQuantity = items.reduce((s, i) => s + (i.quantity_g || 0), 0)
-  const lowItems = items.filter((i) => (i.quantity_g || 0) <= 0).length
+const grouped = useMemo(() => {
+const map = new Map<string, FridgeItemInfo[]>()
+for (const it of filteredItems) {
+const cat = it.category || '未分类'
+if (!map.has(cat)) map.set(cat, [])
+map.get(cat)!.push(it)
+}
+// 分组顺序与左侧分类导航保持一致，导航中不存在的分类排在最后
+const order = new Map(categories.map((c, i) => [c, i]))
+return Array.from(map.entries()).sort(
+(a, b) => (order.get(a[0]) ?? Infinity) - (order.get(b[0]) ?? Infinity),
+)
+}, [filteredItems, categories])
+
+const totalQuantity = items.reduce((s, i) => s + (i.quantity_g || 0), 0)
+const lowItems = items.filter((i) => (i.quantity_g || 0) <= 0).length
+const expiringCount = items.filter((i) => expireState(i.expires_at) === 'soon').length
+const expiredCount = items.filter((i) => expireState(i.expires_at) === 'over').length
 
   return (
-    <div className="fridge">
+    <div className="fridge" ref={pageRef}>
       {/* 概览 */}
       <div className="fridge__summary card">
         <div className="fridge-summary__item">
@@ -302,13 +435,27 @@ export default function Fridge() {
             <span className="fridge-summary__label">总库存量(g)</span>
           </div>
         </div>
-        <div className="fridge-summary__item">
-          <AlertTriangle size={20} className="fridge-summary__icon" />
-          <div>
-            <span className="fridge-summary__value fridge-summary__value--warn">{lowItems}</span>
-            <span className="fridge-summary__label">已用完</span>
-          </div>
-        </div>
+<div className="fridge-summary__item">
+<AlertTriangle size={20} className="fridge-summary__icon" />
+<div>
+<span className="fridge-summary__value fridge-summary__value--warn">{lowItems}</span>
+<span className="fridge-summary__label">已用完</span>
+</div>
+</div>
+<div className="fridge-summary__item">
+<AlertTriangle size={20} className="fridge-summary__icon" />
+<div>
+<span className="fridge-summary__value fridge-summary__value--warn">{expiringCount}</span>
+<span className="fridge-summary__label">预计过期</span>
+</div>
+</div>
+<div className="fridge-summary__item">
+<AlertTriangle size={20} className="fridge-summary__icon" />
+<div>
+<span className="fridge-summary__value fridge-summary__value--danger">{expiredCount}</span>
+<span className="fridge-summary__label">已过期</span>
+</div>
+</div>
         <div className="fridge-summary__actions">
           <button className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={recognizing}>
             {recognizing ? <Loader2 size={14} className="spin" /> : <Camera size={14} />}
@@ -358,66 +505,114 @@ export default function Fridge() {
         </div>
       )}
 
-      {/* 分类筛选 */}
-      <div className="fridge__tabs">
-        <button
-          className={`fridge-tab ${activeCategory === '' ? 'fridge-tab--active' : ''}`}
-          onClick={() => setActiveCategory('')}
-        >
-          全部
-        </button>
-        {categories.map((c) => (
-          <button
-            key={c}
-            className={`fridge-tab ${activeCategory === c ? 'fridge-tab--active' : ''}`}
-            onClick={() => setActiveCategory(c)}
-          >
-            {c}
-          </button>
-        ))}
-      </div>
-
-      {/* 食材列表 */}
-      <div className="fridge__items">
-        {loading ? (
-          <div className="fridge__loading card">
-            <Loader2 size={24} className="spin" /> 正在加载冰箱...
-          </div>
-        ) : items.length === 0 ? (
-          <div className="fridge__empty card">
-            冰箱空空如也，点击「拍照入库」或「手动添加」开始记录食材
+      {/* 分类导航 + 食材列表（铺满剩余高度，分类过多时用下拉框选择） */}
+      <div className="fridge__body">
+        {categories.length > 8 ? (
+          <div className="fridge__cat-bar">
+            <select
+              className="fridge__cat-select"
+              value={activeCategory}
+              onChange={(e) => setActiveCategory(e.target.value)}
+            >
+              <option value="">全部</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+              <option value="__expiring__">预计过期</option>
+              <option value="__expired__">已过期</option>
+            </select>
           </div>
         ) : (
-          grouped.map(([cat, list]) => (
-            <div key={cat} className="fridge-group">
-              <h3 className="fridge-group__title">{cat}</h3>
-              <div className="fridge-group__grid">
-                {list.map((item) => (
-                  <FridgeItemCard
-                    key={item.id}
-                    item={item}
-                    onEdit={() => openEdit(item)}
-                    onDelete={() => handleDelete(item)}
-                  />
-                ))}
-              </div>
-            </div>
-          ))
+          <div className="fridge__cat-nav" ref={catNavRef}>
+            <button
+              className={`fridge-cat ${activeCategory === '' ? 'fridge-cat--active' : ''}`}
+              onClick={() => setActiveCategory('')}
+            >
+              全部
+            </button>
+            {categories.map((c) => (
+              <button
+                key={c}
+                className={`fridge-cat ${activeCategory === c ? 'fridge-cat--active' : ''}`}
+                onClick={() => setActiveCategory(c)}
+              >
+                {c}
+              </button>
+            ))}
+            <button
+              className={`fridge-cat fridge-cat--expiring ${activeCategory === '__expiring__' ? 'fridge-cat--active' : ''}`}
+              onClick={() => setActiveCategory('__expiring__')}
+            >
+              预计过期
+            </button>
+            <button
+              className={`fridge-cat fridge-cat--expired ${activeCategory === '__expired__' ? 'fridge-cat--active' : ''}`}
+              onClick={() => setActiveCategory('__expired__')}
+            >
+              已过期
+            </button>
+          </div>
         )}
+        <div className="fridge__items" ref={itemsScrollRef}>
+          {loading ? (
+            <div className="fridge__loading card">
+              <Loader2 size={24} className="spin" /> 正在加载冰箱...
+            </div>
+) : filteredItems.length === 0 ? (
+<div className="fridge__empty card">
+  {items.length === 0
+    ? '冰箱空空如也，点击「拍照入库」或「手动添加」开始记录食材'
+    : '没有符合条件的食材'}
+</div>
+) : (
+grouped.map(([cat, list]) => (
+<div key={cat} className="fridge-group" data-group-cat={cat}>
+                <h3 className="fridge-group__title">{cat}</h3>
+                <div className="fridge-group__list">
+                  {list.map((item) => (
+                    <FridgeItemCard
+                      key={item.id}
+                      item={item}
+                      onEdit={() => openEdit(item)}
+                      onDelete={() => handleDelete(item)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
-      {/* 智能菜谱推荐 */}
+      {/* 智能菜谱推荐（底部，内容过多时区块内滚动） */}
       <div className="fridge__recipes card">
         <div className="fridge-recipes__header">
           <span className="fridge-recipes__title">
             <Sparkles size={16} /> 智能菜谱推荐
           </span>
           <div className="fridge-recipes__controls">
+            <select
+              className="fridge-recipes__pref fridge-recipes__select"
+              value={prefChip}
+              onChange={(e) => {
+                setPrefChip(e.target.value)
+                // 选中具体偏好时自动清空菜名输入，二者互斥
+                if (e.target.value !== '默认') setPreferences('')
+              }}
+            >
+              {PREF_CHIP_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
             <input
               className="fridge-recipes__pref"
-              placeholder="偏好（如高蛋白/快手菜）"
+              placeholder="输入菜名"
               value={preferences}
-              onChange={(e) => setPreferences(e.target.value)}
+              onChange={(e) => {
+                setPreferences(e.target.value)
+                // 开始输入菜名时偏好自动切回"默认"，二者互斥
+                if (e.target.value.trim() && prefChip !== '默认') setPrefChip('默认')
+              }}
             />
             <button className="btn btn-primary" onClick={handleRecommend} disabled={loadingRecipes || items.length === 0}>
               {loadingRecipes ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
@@ -448,8 +643,45 @@ export default function Fridge() {
         )}
       </div>
 
-      {/* 新增/编辑弹窗 */}
-      {showItemModal && (
+{/* 删除确认弹窗 */}
+{deleting && (
+<div className="modal-overlay" onClick={() => !deletingInProgress && setDeleting(null)}>
+<div className="modal modal--small" onClick={(e) => e.stopPropagation()}>
+<div className="modal__header">
+<h3 className="modal__title">删除食材</h3>
+<button className="modal__close" onClick={() => setDeleting(null)}>
+<X size={18} />
+</button>
+</div>
+<div className="modal__body">
+<div className="fridge-delete-confirm">
+<AlertTriangle size={30} className="fridge-delete-confirm__icon" />
+<p className="fridge-delete-confirm__text">
+确定要删除「<strong>{deleting.name}</strong>」吗？
+</p>
+<p className="fridge-delete-confirm__subtext">删除后该食材的库存记录将不可恢复。</p>
+<div className="fridge-delete-confirm__actions">
+<button className="btn btn-ghost" onClick={() => setDeleting(null)} disabled={deletingInProgress}>
+取消
+</button>
+<button
+className="btn btn-primary fridge-delete-confirm__btn"
+style={{ background: 'var(--color-danger)' }}
+onClick={confirmDelete}
+disabled={deletingInProgress}
+>
+{deletingInProgress ? <Loader2 size={14} className="spin" /> : <Trash2 size={14} />}
+{deletingInProgress ? '删除中' : '确认删除'}
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+)}
+
+{/* 新增/编辑弹窗 */}
+{showItemModal && (
         <div className="modal-overlay" onClick={() => setShowItemModal(false)}>
           <div className="modal modal--small" onClick={(e) => e.stopPropagation()}>
             <div className="modal__header">
@@ -605,10 +837,13 @@ function FridgeItemCard({
 }) {
   const empty = (item.quantity_g || 0) <= 0
   return (
-    <div className={`fridge-card card ${empty ? 'fridge-card--empty' : ''}`}>
-      {item.image_url ? (
-        <img src={item.image_url} alt={item.name} className="fridge-card__img" />
-      ) : (
+    <div
+      className={`fridge-card card ${empty ? 'fridge-card--empty' : ''}`}
+      data-fridge-item-id={item.id}
+    >
+{authedImageUrl(item.image_url) ? (
+<img src={authedImageUrl(item.image_url)!} alt={item.name} className="fridge-card__img" />
+) : (
         <div className="fridge-card__img fridge-card__img--placeholder">
           <ImageOff size={20} />
         </div>
@@ -631,14 +866,14 @@ function FridgeItemCard({
             )}
           </div>
         )}
-        <div className="fridge-card__footer">
-          <button className="btn btn-ghost fridge-card__btn" onClick={onEdit}>
-            <Pencil size={12} /> 编辑
-          </button>
-          <button className="btn btn-ghost fridge-card__btn" onClick={onDelete}>
-            <Trash2 size={12} /> 删除
-          </button>
-        </div>
+      </div>
+      <div className="fridge-card__actions">
+        <button className="btn btn-ghost fridge-card__btn" onClick={onEdit}>
+          <Pencil size={12} /> 编辑
+        </button>
+        <button className="btn btn-ghost fridge-card__btn" onClick={onDelete}>
+          <Trash2 size={12} /> 删除
+        </button>
       </div>
     </div>
   )
@@ -661,11 +896,14 @@ function RecipeCard({
       <div className="recipe-card__head">
         <span className="recipe-card__name">{recipe.name}</span>
         {recipe.description && <span className="recipe-card__desc">{recipe.description}</span>}
-        {recipe.total_calories != null && recipe.total_calories > 0 && (
-          <span className="recipe-card__cal" title="按用料估算的整道菜总热量">
-            <Flame size={12} /> 约 {Math.round(recipe.total_calories)} kcal
+        <div className="recipe-card__nutrition" title="按菜谱用量与食材营养数据估算的整餐营养">
+          <span className="recipe-card__cal">
+            <Flame size={12} /> {Math.round(recipe.total_calories ?? 0)} kcal
           </span>
-        )}
+          <span><Beef size={12} /> 蛋白 {(recipe.total_protein_g ?? 0).toFixed(1)}g</span>
+          <span><Wheat size={12} /> 碳水 {(recipe.total_carbs_g ?? 0).toFixed(1)}g</span>
+          <span><Droplet size={12} /> 脂肪 {(recipe.total_fat_g ?? 0).toFixed(1)}g</span>
+        </div>
       </div>
       <div className="recipe-card__ingredients">
         {recipe.ingredients.map((ing, idx) => {
@@ -690,7 +928,7 @@ function RecipeCard({
       <div className="recipe-card__actions">
         <button className="btn btn-primary" onClick={onConfirm} disabled={confirming}>
           {confirming ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
-          确认烹饪并扣减库存
+          确认烹饪、记录饮食并扣减库存
         </button>
       </div>
     </div>

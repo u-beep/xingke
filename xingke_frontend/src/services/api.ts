@@ -157,16 +157,39 @@ export const chatApi = {
    * - status="running"：AgentLoop 仍在执行
    * - status="done"：完成，result 为完整回复
    * - status="error"：失败，error 为错误信息
+   * - status="cancelled"：已被用户终止
    */
-  async poll(taskId: string): Promise<{
+  async poll(taskId: string, signal?: AbortSignal): Promise<{
     task_id: string
-    status: 'running' | 'done' | 'error' | 'unknown'
+    status: 'running' | 'done' | 'error' | 'cancelled' | 'unknown'
     result: string
     error: string | null
     session_id: string
     done: boolean
+    /** 后台提取状态：pending=提取中 / ready=已就绪 / none=无提取 */
+    extract_status?: 'pending' | 'ready' | 'none'
   }> {
-    return request<any>(`${API_BASE}/chat/poll?task_id=${encodeURIComponent(taskId)}`)
+    return request<any>(`${API_BASE}/chat/poll?task_id=${encodeURIComponent(taskId)}`, { signal })
+  },
+
+  /**
+   * 拉取后台提取结果（饮食/饮水）。
+   * 主回复返回后提取仍在后台跑，前端在用户阅读期间轮询本接口。
+   * - status="ready"：提取完成（diet_data/water_data 可能为 null 表示无记录）
+   * - status="pending"：提取仍在进行，稍后再来
+   * - status="none"：终结态（任务不存在/未完成/无提取），停止轮询
+   */
+  async extract(taskId: string, signal?: AbortSignal): Promise<{
+    status: 'ready' | 'pending' | 'none'
+    diet_data: { foods: any[]; total_calories: number } | null
+    water_data: { amount_ml: number; drink_type: string; description: string } | null
+  }> {
+    return request<any>(`${API_BASE}/chat/extract?task_id=${encodeURIComponent(taskId)}`, { signal })
+  },
+
+  /** 终止正在生成的对话任务（用户点击"停止生成"） */
+  async cancel(taskId: string): Promise<{ success: boolean; message: string }> {
+    return request<any>(`${API_BASE}/chat/cancel?task_id=${encodeURIComponent(taskId)}`, { method: 'POST' })
   },
 
   /** 查询会话列表 */
@@ -262,9 +285,9 @@ export const toolsApi = {
   },
 
   /** 生成个性化饮食方案 */
-  async generateDietPlan(params: DietPlanParams = {}): Promise<any> {
+  async generateDietPlan(params: DietPlanParams = {}, signal?: AbortSignal): Promise<any> {
     const query = buildQuery(params)
-    return request<any>(`${API_BASE}/tools/diet-plan${query}`, { method: 'POST' })
+    return request<any>(`${API_BASE}/tools/diet-plan${query}`, { method: 'POST', signal })
   },
 
   /** 生成运动训练计划 */
@@ -292,10 +315,11 @@ export const toolsApi = {
 
 export const visionApi = {
   /** 食物识别 */
-  async recognizeFood(data: FoodRecognitionRequest): Promise<any> {
+  async recognizeFood(data: FoodRecognitionRequest, signal?: AbortSignal): Promise<any> {
     return request<any>(`${API_BASE}/vision/food-recognition`, {
       method: 'POST',
       body: JSON.stringify(data),
+      signal,
     })
   },
 
@@ -397,8 +421,8 @@ export const weightApi = {
   },
 
   /** 查询体重历史 */
-  async history(days: number = 30): Promise<any> {
-    const query = buildQuery({ days })
+  async history(days: number = 30, limit: number = 100): Promise<any> {
+    const query = buildQuery({ days, limit })
     return request<any>(`${API_BASE}/weight/history${query}`)
   },
 
@@ -523,6 +547,28 @@ export interface DailyDietResult {
 // ============================================
 
 export const profileApi = {
+  /** 获取当前用户完整资料（身体数据/偏好/目标） */
+  async me(): Promise<{
+    user_id: string
+    profile: {
+      user_id: string
+      height_cm: number | null
+      weight_kg: number | null
+      age: number | null
+      gender: string | null
+      target_weight_kg: number | null
+      exercise_frequency: string | null
+      health_goal: string | null
+      target_date: string | null
+      sleep_hours: number | null
+      water_intake_ml: number | null
+      daily_calorie_budget: number | null
+    }
+    is_complete: boolean
+  }> {
+    return request<any>(`${API_BASE}/profile/me`)
+  },
+
   /** 获取每日热量目标预算（含 TDEE 建议值） */
   async getCalorieBudget(userId: string): Promise<{
     user_id: string
@@ -629,6 +675,23 @@ export const exerciseApi = {
     const query = buildQuery({ days })
     return request<any>(`${API_BASE}/exercise/history${query}`)
   },
+
+  /** 查询指定日期区间的运动记录（日历切换历史用） */
+  async range(startDate: string, endDate: string): Promise<any> {
+    const query = buildQuery({ start_date: startDate, end_date: endDate })
+    return request<any>(`${API_BASE}/exercise/history${query}`)
+  },
+
+  /** 按日聚合运动统计（次数/时长/消耗热量，用于周/月/年图表） */
+  async stats(startDate: string, endDate: string): Promise<{ stats: DailyStat[] }> {
+    const query = buildQuery({ start_date: startDate, end_date: endDate })
+    return request<any>(`${API_BASE}/exercise/stats${query}`)
+  },
+
+  /** 删除运动记录 */
+  async deleteRecord(recordId: number): Promise<{ success: boolean }> {
+    return request<any>(`${API_BASE}/exercise/record/${recordId}`, { method: 'DELETE' })
+  },
 }
 
 // ============================================
@@ -656,10 +719,35 @@ export interface PlanItem {
 }
 
 export interface PlanSummary {
+  /** 已完成项目的实际运动消耗，仅该值参与热量缺口计算。 */
   total_calories: number
   total_duration: number
+  completed_count: number
+  /** 所有待办与已完成项目的预计值，仅用于计划展示。 */
+  planned_calories: number
+  planned_duration: number
   item_count: number
   items: PlanItem[]
+}
+
+export interface ExerciseRecordInfo {
+  id: number
+  exercise_name: string
+  exercise_type: string | null
+  duration_min: number | null
+  calories_burned: number | null
+  completed: boolean
+  scheduled_date: string | null
+  recorded_at: string | null
+  notes: string | null
+}
+
+/** 按日聚合的运动统计点 */
+export interface DailyStat {
+  date: string
+  count: number
+  duration_min: number
+  calories: number
 }
 
 export const exercisePlanApi = {
@@ -691,6 +779,17 @@ export const exercisePlanApi = {
   async byDate(userId: string, date: string): Promise<PlanSummary> {
     const query = buildQuery({ user_id: userId, date })
     return request<any>(`${API_BASE}/exercise-plan/by-date${query}`)
+  },
+
+  /** 确认完成计划项，并将实际消耗写入运动记录。 */
+  async completeItem(itemId: number): Promise<{
+    success: boolean
+    record_id?: number
+    calories_burned?: number
+    already_completed?: boolean
+    message?: string
+  }> {
+    return request<any>(`${API_BASE}/exercise-plan/item/${itemId}/complete`, { method: 'POST' })
   },
 
   /** 删除运动计划项 */
@@ -927,9 +1026,11 @@ export interface TakeoutOrderInfo {
   meal_type: string
   include_in_stats: boolean
   order_status: string
-  total_calories: number
-  total_protein_g: number
-  notes: string | null
+total_calories: number
+total_protein_g: number
+total_carbs_g?: number
+total_fat_g?: number
+notes: string | null
   created_at: string | null
   // 关联字段（join takeout_dishes）
   image_url: string | null
@@ -938,11 +1039,15 @@ export interface TakeoutOrderInfo {
 }
 
 export interface TakeoutSummary {
-  order_count: number
-  total_calories: number
-  total_protein_g: number
-  stats_calories: number
-  stats_protein_g: number
+order_count: number
+total_calories: number
+total_protein_g: number
+total_carbs_g?: number
+total_fat_g?: number
+stats_calories: number
+stats_protein_g: number
+stats_carbs_g?: number
+stats_fat_g?: number
 }
 
 export interface PlaceOrderResult {
@@ -1069,12 +1174,15 @@ export interface FridgeRecipeIngredient {
 }
 
 export interface FridgeRecipe {
-  name: string
-  description: string
-  steps: string[]
-  ingredients: FridgeRecipeIngredient[]
-  /** 菜谱总热量(kcal),后端按用料与营养库计算 */
-  total_calories?: number
+name: string
+description: string
+steps: string[]
+ingredients: FridgeRecipeIngredient[]
+/** 菜谱整餐营养，后端按用料和营养库计算。 */
+total_calories?: number
+total_protein_g?: number
+total_carbs_g?: number
+total_fat_g?: number
 }
 
 export interface FridgeDeduction {
@@ -1188,17 +1296,207 @@ export const fridgeApi = {
 
   /** 确认使用菜谱并扣减库存 */
   async confirmRecipe(recipe: FridgeRecipe): Promise<{
-    success: boolean
-    recipe_name: string
-    deducted: FridgeDeduction[]
-    insufficient: FridgeDeduction[]
-    missing: FridgeDeduction[]
-    items: FridgeItemInfo[]
-    message: string
+success: boolean
+recipe_name: string
+deducted: FridgeDeduction[]
+insufficient: FridgeDeduction[]
+missing: FridgeDeduction[]
+total_calories: number
+total_protein_g: number
+total_carbs_g: number
+total_fat_g: number
+meal_id?: number
+items: FridgeItemInfo[]
+message: string
   }> {
     return request<any>(`${API_BASE}/fridge/recipes/confirm`, {
       method: 'POST',
       body: JSON.stringify({ recipe }),
+    })
+  },
+}
+
+// ============================================
+//  活动模块 API
+// ============================================
+
+/** 活动（含实时加入人数） */
+export interface ActivityInfo {
+  id: number
+  title: string
+  sport_type: string
+  city: string
+  district: string
+  location: string
+  start_time: string | null
+  max_participants: number
+  description: string
+  creator_id: string
+  status: 'open' | 'full' | 'closed' | 'finished'
+  group_id: number | null
+  created_at: string | null
+}
+
+export interface ActivityListItem {
+  activity: ActivityInfo
+  member_count: number
+}
+
+export interface ActivityMyItem extends ActivityListItem {
+  role: 'owner' | 'member'
+}
+
+export interface ActivityDetail {
+  activity: ActivityInfo
+  member_count: number
+  my_role: 'owner' | 'member' | null
+  is_creator: boolean
+}
+
+export interface ActivityMemberInfo {
+  id: number
+  activity_id: number
+  user_id: string
+  role: 'owner' | 'member'
+  nickname: string
+  joined_at: string | null
+}
+
+export interface ActivityGroupInfo {
+  id: number
+  activity_id: number
+  group_name: string
+  announcement: string
+  created_at: string | null
+}
+
+export interface ActivityMessageInfo {
+  id: number
+  group_id: number
+  sender_id: string
+  sender_nickname: string
+  content: string
+  created_at: string | null
+}
+
+export interface CreateActivityData {
+  title: string
+  sport_type: string
+  city: string
+  district?: string
+  location?: string
+  start_time: string
+  max_participants: number
+  description?: string
+}
+
+export const activityApi = {
+  /** 创建活动（自动建群） */
+  async create(data: CreateActivityData): Promise<{ success: boolean; activity: ActivityInfo; group_id: number; message: string }> {
+    return request<any>(`${API_BASE}/activities`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  /** 活动列表（城市/行政区/运动类型/关键词筛选） */
+  async list(params: {
+    city?: string
+    district?: string
+    sport_type?: string
+    keyword?: string
+    status?: string
+    only_mine?: boolean
+    limit?: number
+    offset?: number
+  } = {}): Promise<{ activities: ActivityInfo[]; member_counts: number[]; count: number }> {
+    const query = buildQuery(params)
+    return request<any>(`${API_BASE}/activities${query}`)
+  },
+
+  /** 我加入/发起的活动 */
+  async mine(): Promise<{ activities: ActivityInfo[]; roles: string[]; member_counts: number[]; count: number }> {
+    return request<any>(`${API_BASE}/activities/mine`)
+  },
+
+  /** 运动类型枚举 */
+  async sportTypes(): Promise<{ sport_types: string[] }> {
+    return request<any>(`${API_BASE}/activities/sport-types`)
+  },
+
+  /** 有活动的城市列表 */
+  async cities(): Promise<{ cities: string[] }> {
+    return request<any>(`${API_BASE}/activities/cities`)
+  },
+
+  /** 行政区列表（按城市） */
+  async districts(city?: string): Promise<{ districts: string[] }> {
+    const query = buildQuery({ city })
+    return request<any>(`${API_BASE}/activities/districts${query}`)
+  },
+
+  /** 活动详情 */
+  async detail(activityId: number): Promise<ActivityDetail> {
+    return request<any>(`${API_BASE}/activities/${activityId}`)
+  },
+
+  /** 修改活动（仅发起者） */
+  async update(activityId: number, data: Partial<CreateActivityData> & { status?: string }): Promise<{ success: boolean; activity: ActivityInfo }> {
+    return request<any>(`${API_BASE}/activities/${activityId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  /** 解散活动（仅发起者） */
+  async remove(activityId: number): Promise<{ success: boolean; message: string }> {
+    return request<any>(`${API_BASE}/activities/${activityId}`, { method: 'DELETE' })
+  },
+
+  /** 加入活动（自动加入群聊） */
+  async join(activityId: number): Promise<{ success: boolean; group_id: number; member_count: number; message: string }> {
+    return request<any>(`${API_BASE}/activities/${activityId}/join`, { method: 'POST' })
+  },
+
+  /** 退出活动 */
+  async leave(activityId: number): Promise<{ success: boolean; message: string }> {
+    return request<any>(`${API_BASE}/activities/${activityId}/leave`, { method: 'POST' })
+  },
+
+  /** 成员列表 */
+  async members(activityId: number): Promise<{ members: ActivityMemberInfo[]; count: number; my_role: string }> {
+    return request<any>(`${API_BASE}/activities/${activityId}/members`)
+  },
+
+  /** 移除成员（仅发起者） */
+  async removeMember(activityId: number, userId: string): Promise<{ success: boolean; message: string }> {
+    return request<any>(`${API_BASE}/activities/${activityId}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' })
+  },
+
+  /** 群聊信息 */
+  async group(activityId: number): Promise<{ group: ActivityGroupInfo; my_role: string; member_count: number }> {
+    return request<any>(`${API_BASE}/activities/${activityId}/group`)
+  },
+
+  /** 修改群信息（仅发起者） */
+  async updateGroup(activityId: number, data: { group_name?: string; announcement?: string }): Promise<{ success: boolean; group: ActivityGroupInfo }> {
+    return request<any>(`${API_BASE}/activities/${activityId}/group`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  /** 拉取群聊消息（before_id 向前翻页） */
+  async messages(activityId: number, beforeId?: number, limit: number = 50): Promise<{ group_id: number; messages: ActivityMessageInfo[]; count: number }> {
+    const query = buildQuery({ before_id: beforeId, limit })
+    return request<any>(`${API_BASE}/activities/${activityId}/messages${query}`)
+  },
+
+  /** 发送群聊消息（仅成员） */
+  async sendMessage(activityId: number, content: string): Promise<{ success: boolean; message: ActivityMessageInfo }> {
+    return request<any>(`${API_BASE}/activities/${activityId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content }),
     })
   },
 }

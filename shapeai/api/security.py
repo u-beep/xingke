@@ -16,11 +16,11 @@ from ..auth import resolve_token
 
 
 def bearer_token_from_request(request: Request) -> Optional[str]:
-    """从请求头提取 Bearer Token。"""
+    """从请求头提取 Bearer Token；<img> 等无法携带请求头的场景回退到 ?token= 查询参数。"""
     header = request.headers.get("Authorization", "")
     if header.startswith("Bearer "):
         return header[7:].strip() or None
-    return None
+    return request.query_params.get("token") or None
 
 
 async def auth_middleware(request: Request, call_next):
@@ -44,6 +44,9 @@ async def auth_middleware(request: Request, call_next):
         and path.startswith("/api/v1")
         and not path.startswith("/api/v1/auth/")
         and not path.startswith("/api/v1/health")
+        # 公开图片: 品牌 logo 与内置食材图库均无用户数据, 免登录访问
+        and not path.startswith("/api/v1/takeout/images/")
+        and not path.startswith("/api/v1/fridge/catalog-images/")
         and getattr(request.state, "user_id", None) is None
     ):
         from fastapi.responses import JSONResponse

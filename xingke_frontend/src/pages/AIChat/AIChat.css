@@ -1,7 +1,40 @@
 .ai-chat {
+  position: relative;
   display: flex;
   height: 100%;
   overflow: hidden;
+}
+
+/* —— 日历收起把手 —— */
+.calendar-toggle-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  width: 22px;
+  height: 56px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transition: all var(--transition);
+}
+
+/* 贴在日历面板右缘，点击收起 */
+.calendar-toggle-btn--open {
+  left: 238px; /* 面板宽 260px - 把手宽 22px */
+  border-radius: 12px 0 0 12px;
+  border-right: none;
+}
+
+.calendar-toggle-btn:hover {
+  color: var(--mint-600);
+  background: var(--mint-50);
 }
 
 /* ============ 对话区 ============ */
@@ -545,7 +578,19 @@
 }
 
 .chat-input__send.active:hover {
-  background: var(--mint-500);
+background: var(--mint-500);
+}
+
+/* 生成中：发送按钮切换为"停止生成"，红色方块醒目可点击 */
+.chat-input__send--stop {
+background: var(--color-danger);
+color: #fff;
+cursor: pointer;
+}
+
+.chat-input__send--stop:hover {
+background: #d3382c;
+filter: brightness(1.05);
 }
 
 .chat-input__hint {
@@ -584,11 +629,92 @@
 }
 
 .info-card__header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 14px;
+display: flex;
+justify-content: space-between;
+align-items: center;
+margin-bottom: 14px;
 }
+
+/* —— 添加卡片入口 —— */
+.info-card-add {
+display: flex;
+align-items: center;
+justify-content: center;
+gap: 6px;
+padding: 12px;
+border: 1.5px dashed var(--border, #e5e0d5);
+border-radius: var(--radius-lg, 12px);
+background: transparent;
+color: var(--text-tertiary);
+font-size: 13px;
+cursor: pointer;
+transition: all var(--transition);
+}
+
+.info-card-add:hover {
+border-color: var(--mint-400, #5b9bd5);
+color: var(--mint-600);
+background: var(--mint-50, #f0f7f5);
+}
+
+/* —— 自定义卡片弹窗 —— */
+.card-picker__desc {
+font-size: 13px;
+color: var(--text-secondary);
+margin: 0 0 12px;
+}
+
+.card-picker__list {
+display: flex;
+flex-direction: column;
+gap: 8px;
+margin-bottom: 16px;
+}
+
+.card-picker__item {
+display: flex;
+align-items: center;
+gap: 10px;
+padding: 10px 12px;
+border: 1px solid var(--border, #eee7d9);
+border-radius: var(--radius-md, 10px);
+cursor: pointer;
+transition: all var(--transition);
+}
+
+.card-picker__item:hover {
+border-color: var(--mint-300, #8ec5b8);
+background: var(--mint-50, #f0f7f5);
+}
+
+.card-picker__item input {
+accent-color: var(--mint-500, #3e8e7e);
+width: 16px;
+height: 16px;
+cursor: pointer;
+}
+
+.card-picker__name {
+flex: 1;
+font-size: 14px;
+color: var(--text-primary);
+}
+
+.card-picker__state {
+font-style: normal;
+font-size: 12px;
+color: var(--text-tertiary);
+}
+
+.card-picker__state--on {
+color: var(--mint-600, #2f7a6b);
+font-weight: 600;
+}
+
+.card-picker__done {
+width: 100%;
+}
+
 
 .info-card__title {
   display: flex;
@@ -600,10 +726,14 @@
 }
 
 .info-card__link {
-  font-size: 12px;
-  color: var(--mint-500);
-  cursor: pointer;
+font-size: 12px;
+color: var(--mint-500);
+cursor: pointer;
+border: 0;
+background: transparent;
+padding: 0;
 }
+
 
 /* —— 热量环形进度 —— */
 .calorie-ring {
@@ -1199,13 +1329,42 @@
 }
 
 .exercise-add-btn {
-  width: 100%;
-  padding: 8px;
-  font-size: 12px;
-  margin-bottom: 10px;
+width: 100%;
+padding: 8px;
+font-size: 12px;
+margin-bottom: 10px;
+}
+
+.exercise-panel-tabs {
+display: flex;
+gap: 6px;
+margin-bottom: 12px;
+padding: 3px;
+border-radius: var(--radius-md);
+background: var(--bg-hover);
+}
+
+.exercise-panel-tab {
+flex: 1;
+border: 0;
+border-radius: calc(var(--radius-md) - 2px);
+background: transparent;
+color: var(--text-tertiary);
+padding: 7px 8px;
+font-size: 12px;
+font-weight: 600;
+cursor: pointer;
+transition: all var(--transition);
+}
+
+.exercise-panel-tab--active {
+background: var(--bg-card);
+color: var(--mint-600);
+box-shadow: var(--shadow-sm);
 }
 
 .plan-list {
+
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1252,12 +1411,41 @@
 }
 
 .plan-item__calories {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--mint-600);
+font-size: 12px;
+font-weight: 700;
+color: var(--mint-600);
+}
+
+.plan-item__complete,
+.plan-item__completed {
+display: inline-flex;
+align-items: center;
+gap: 3px;
+border-radius: var(--radius-sm);
+padding: 4px 7px;
+font-size: 11px;
+font-weight: 600;
+white-space: nowrap;
+}
+
+.plan-item__complete {
+border: 1px solid var(--mint-300);
+background: var(--mint-50);
+color: var(--mint-600);
+cursor: pointer;
+}
+
+.plan-item__complete:hover {
+background: var(--mint-100);
+}
+
+.plan-item__completed {
+color: var(--color-success);
+background: #eaf8f0;
 }
 
 .plan-item__delete {
+
   width: 22px;
   height: 22px;
   border: none;
@@ -1294,12 +1482,77 @@
 }
 
 .exercise-summary__value {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
+font-size: 14px;
+font-weight: 700;
+color: var(--text-primary);
+}
+
+.exercise-summary__hint {
+margin-top: 5px;
+font-size: 10px;
+line-height: 1.5;
+color: var(--text-tertiary);
+}
+
+.exercise-history-list {
+display: flex;
+flex-direction: column;
+gap: 6px;
+}
+
+.exercise-history-item {
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 8px;
+padding: 9px 10px;
+border-radius: var(--radius-md);
+background: var(--bg-hover);
+}
+
+.exercise-history-item__main {
+display: flex;
+align-items: center;
+gap: 7px;
+min-width: 0;
+}
+
+.exercise-history-item__name {
+font-size: 12px;
+font-weight: 600;
+color: var(--text-primary);
+}
+
+.exercise-history-item__meta {
+margin-top: 2px;
+font-size: 10px;
+color: var(--text-tertiary);
+}
+
+.exercise-history-item__calories {
+font-size: 12px;
+white-space: nowrap;
+color: var(--mint-600);
+}
+
+.exercise-history-empty {
+padding: 20px 8px;
+text-align: center;
+font-size: 12px;
+color: var(--text-tertiary);
+}
+
+/* —— 运动热量消耗 —— */
+
+.exercise-burn__hint {
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-tertiary);
 }
 
 /* —— 热量缺口 —— */
+
 .calorie-gap {
   display: flex;
   flex-direction: column;
@@ -1587,9 +1840,15 @@
 }
 
 .confirm-modal__icon {
-  color: var(--color-danger);
-  margin: 0 auto 16px;
+color: var(--color-danger);
+margin: 0 auto 16px;
 }
+
+.exercise-complete-modal__icon {
+color: var(--mint-500);
+margin: 0 auto 16px;
+}
+
 
 .confirm-modal__text {
   font-size: 16px;

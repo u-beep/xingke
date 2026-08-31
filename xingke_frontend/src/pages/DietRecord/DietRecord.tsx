@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Flame, Loader2, X, Pencil, RefreshCw, ChevronLeft, ChevronRight, ShoppingCart, MessageSquare, Refrigerator } from 'lucide-react'
 import { dietApi, profileApi, type DailyDietRecord } from '../../services/api'
 import { getCurrentUserId } from '../../services/authStore'
@@ -47,8 +48,26 @@ function SourceIcon({ source }: { source: string }) {
 }
 
 export default function DietRecord() {
-  // 选中的日期(默认今天)
-  const [date, setDate] = useState<string>(todayStr())
+  // 查看日期同步 URL ?date=（刷新/分享后保持在同一日期）
+  const [searchParams, setSearchParams] = useSearchParams()
+  const dateParam = searchParams.get('date')
+  const initialDate = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : todayStr()
+  // 选中的日期(默认今天, URL 参数优先)
+  const [date, setDateState] = useState<string>(initialDate)
+
+  /** 切换日期: 更新状态 + 同步 URL（保持刷新后不丢） */
+  const setDate = (d: string) => {
+    setDateState(d)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (d === todayStr()) next.delete('date')
+        else next.set('date', d)
+        return next
+      },
+      { replace: true },
+    )
+  }
   // 当日聚合数据(记录+统计)
   const [daily, setDaily] = useState<DailyDietRecord[] | null>(null)
   const [summary, setSummary] = useState<any>(null)
@@ -129,9 +148,9 @@ export default function DietRecord() {
         <div className="diet-overview__left">
           <div className="diet-overview__ring">
             <svg viewBox="0 0 100 100" width="100" height="100">
-              <circle cx="50" cy="50" r="42" fill="none" stroke="#fff3c4" strokeWidth="8" />
+              <circle cx="50" cy="50" r="42" fill="none" stroke="var(--mt-100)" strokeWidth="8" />
               <circle
-                cx="50" cy="50" r="42" fill="none" stroke="#ffc300" strokeWidth="8"
+                cx="50" cy="50" r="42" fill="none" stroke="var(--mt-400)" strokeWidth="8"
                 strokeLinecap="round"
                 strokeDasharray={`${(percent / 100) * 264} 264`}
                 transform="rotate(-90 50 50)"
@@ -226,10 +245,13 @@ export default function DietRecord() {
                       <span className="diet-record-item__meal">{MEAL_LABELS[r.meal_type]}</span>
                     )}
                   </div>
-                  {(r.amount_g != null || r.ingredients_summary) && (
+                  {(r.amount_g != null || r.ingredients_summary || r.protein_g != null || r.carbs_g != null || r.fat_g != null) && (
                     <div className="diet-record-item__detail">
                       {r.amount_g != null && <span>{Math.round(r.amount_g)}g</span>}
                       {r.ingredients_summary && <span className="diet-record-item__ingredients" title={r.ingredients_summary}>{r.ingredients_summary}</span>}
+                      <span className="diet-record-item__macros">
+                        蛋白 {Math.round(r.protein_g ?? 0)}g · 碳水 {Math.round(r.carbs_g ?? 0)}g · 脂肪 {Math.round(r.fat_g ?? 0)}g
+                      </span>
                     </div>
                   )}
                   {!r.include_in_stats && (

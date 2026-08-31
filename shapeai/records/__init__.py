@@ -5,6 +5,7 @@ from .diet_store import DietStore, DietRecord
 from .diet_extractor import DietExtractor
 from .hydration_store import HydrationStore, HydrationRecord
 from .hydration_extractor import HydrationExtractor
+from .combined_extractor import CombinedExtractor
 from .exercise_store import ExerciseStore, ExerciseRecord
 from .exercise_plan_store import ExercisePlanStore, ExercisePlanItem, EXERCISE_MET
 from .workout_store import WorkoutStore, ExerciseCalorie, WorkoutTemplate
@@ -12,6 +13,7 @@ from .goal_store import GoalStore, UserGoal
 from .feedback_store import FeedbackStore, MessageFeedback
 from .takeout_store import TakeoutStore, TakeoutDish, TakeoutOrder
 from .fridge_store import FridgeStore, FridgeItem
+from .activity_store import ActivityStore, Activity, ActivityGroup, ActivityMember, ActivityMessage, ACTIVITY_SPORT_TYPES, ACTIVITY_SCHEMA_SQL
 
 __all__ = [
     "WeightStore", "WeightRecord",
@@ -19,6 +21,7 @@ __all__ = [
     "DietExtractor",
     "HydrationStore", "HydrationRecord",
     "HydrationExtractor",
+    "CombinedExtractor",
     "ExerciseStore", "ExerciseRecord",
     "ExercisePlanStore", "ExercisePlanItem", "EXERCISE_MET",
     "WorkoutStore", "ExerciseCalorie", "WorkoutTemplate",
@@ -26,4 +29,6 @@ __all__ = [
     "FeedbackStore", "MessageFeedback",
     "TakeoutStore", "TakeoutDish", "TakeoutOrder",
     "FridgeStore", "FridgeItem",
+    "ActivityStore", "Activity", "ActivityGroup", "ActivityMember", "ActivityMessage",
+    "ACTIVITY_SPORT_TYPES", "ACTIVITY_SCHEMA_SQL",
 ]
