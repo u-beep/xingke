@@ -261,8 +261,13 @@ CREATE TABLE IF NOT EXISTS hydration_records (
 );
 CREATE INDEX IF NOT EXISTS idx_hydration_user_time ON hydration_records (user_id, recorded_at DESC);
 
--- 用户资料表补充字段（daily_calorie_budget：用户自定义每日热量预算）
+-- 用户资料表补充字段（daily_calorie_budget：每日热量预算，由营养素目标自动推算）
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS daily_calorie_budget INTEGER;
+-- 三大营养素每日目标(g)：每天按体重/身高/BMI 自动生成默认值，用户可调整；调整后预算热量随之重算
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS protein_target_g REAL;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS carbs_target_g REAL;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS fat_target_g REAL;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS macro_targets_date VARCHAR(32);
 
 -- 冰箱食材表（用户冰箱库存,图片存 MinIO 对象 key）
 CREATE TABLE IF NOT EXISTS fridge_items (

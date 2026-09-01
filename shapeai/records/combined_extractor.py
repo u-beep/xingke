@@ -79,9 +79,21 @@ class CombinedExtractor:
         "今天吃", "刚吃", "刚喝", "中午吃", "晚上吃", "早上吃",
     ]
 
+    # 这类表述表示用户正在报告真实摄入。命中且能匹配到营养库时，
+    # 应直接生成确认卡，不能因模型超时或偶发误判而让用户失去录入入口。
+    EXPLICIT_DIET_RECORD_PHRASES = [
+        "吃了", "吃过", "刚吃", "今天吃", "早上吃", "中午吃", "晚上吃",
+        "早餐吃", "午餐吃", "晚餐吃", "摄入了", "已摄入",
+        "帮我记录", "记录一下", "记一下", "饮食打卡",
+    ]
+
     @classmethod
     def _needs_diet_check(cls, user_message: str) -> bool:
         return any(kw in user_message for kw in cls.DIET_KEYWORDS)
+
+    @classmethod
+    def _has_explicit_diet_record(cls, user_message: str) -> bool:
+        return any(phrase in user_message for phrase in cls.EXPLICIT_DIET_RECORD_PHRASES)
 
     @classmethod
     def _needs_water_check(cls, user_message: str) -> bool:
@@ -124,7 +136,21 @@ class CombinedExtractor:
             logger.debug("用户消息不含饮食/饮水关键词，跳过提取")
             return None
 
-        # 一次 LLM 调用同时提取两类记录
+        # 对“今天吃了苹果”“刚吃了一碗面”这类明确摄入先走本地营养库。
+        # 规则结果无需等待模型，能稳定、即时地让前端展示“计入摄入”确认卡。
+        if need_diet and self._has_explicit_diet_record(user_message):
+            foods = self._diet._rule_based_extract_foods(user_message)
+            if foods:
+                total_calories = round(sum(float(food.get("calories", 0) or 0) for food in foods), 1)
+                # 同一条消息若也报告了饮水，直接用本地规则一并生成两张确认卡。
+                water_data = self._water._rule_based_extract(user_message) if need_water else None
+                logger.info("明确饮食记录命中规则引擎: foods=%d has_water=%s", len(foods), bool(water_data))
+                return {
+                    "diet_data": {"foods": foods, "total_calories": total_calories},
+                    "water_data": water_data,
+                }
+
+        # 规则库无法识别时，再由模型补充识别库外食物与饮水信息。
         if self.gateway:
             try:
                 food_db_str = json.dumps(self._diet._food_db, ensure_ascii=False, indent=2)
@@ -145,8 +171,8 @@ class CombinedExtractor:
                     water_data = self._normalize_water(result.get("water"))
                     if diet_data or water_data:
                         return {"diet_data": diet_data, "water_data": water_data}
-                    # LLM 明确判断无记录 → 结束（保持原提取器语义，不重复走规则引擎）
-                    return None
+                    # 模型把明确表达误判为非记录时，仍继续规则兜底，避免确认卡缺失。
+                    logger.info("合并提取未得到有效记录，继续使用规则引擎兜底")
             except Exception as exc:
                 logger.warning("LLM 合并提取失败，回退规则引擎: %s", exc)
 

@@ -41,6 +41,17 @@ class HydrationRecord:
 class HydrationStore:
     """饮水记录存储器。"""
 
+    def _get_goal_ml(self, user_id: str) -> int:
+        """获取用户每日饮水目标：优先用户自定义（Profile.water_intake_ml），回退默认值。"""
+        try:
+            from ..user_profile import ProfileStore
+            profile = ProfileStore().get(user_id)
+            if profile and profile.water_intake_ml and profile.water_intake_ml > 0:
+                return int(profile.water_intake_ml)
+        except Exception as exc:
+            logger.warning("读取用户饮水目标失败，回退默认值: %s", exc)
+        return DEFAULT_DAILY_GOAL_ML
+
     def add_record(self, record: HydrationRecord) -> Optional[int]:
         """添加饮水记录。"""
         try:
@@ -65,6 +76,45 @@ class HydrationStore:
         except Exception as exc:
             logger.error("添加饮水记录失败: %s", exc)
             return None
+
+    def set_today_total(self, user_id: str, total_ml: float) -> bool:
+        """手动设置今日饮水总量。
+
+        - 新值大于当前总量：补录差值（drink_type='manual'）
+        - 新值小于当前总量：清空今日记录后插入单条手动记录（类型细分丢失）
+        """
+        try:
+            summary = self.get_today_summary(user_id)
+            current = float(summary.get("total_ml") or 0)
+            target = max(0.0, float(total_ml))
+            diff = round(target - current, 1)
+            if abs(diff) < 0.5:
+                return True
+            if diff > 0:
+                return self.add_record(HydrationRecord(
+                    user_id=user_id,
+                    amount_ml=diff,
+                    drink_type="manual",
+                    notes="手动补录",
+                )) is not None
+            # diff < 0：清空今日记录，重建单条
+            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            with pg_cursor() as cur:
+                cur.execute(
+                    "DELETE FROM hydration_records WHERE user_id = %s AND recorded_at >= %s",
+                    (user_id, today),
+                )
+            if target > 0:
+                return self.add_record(HydrationRecord(
+                    user_id=user_id,
+                    amount_ml=target,
+                    drink_type="manual",
+                    notes="手动调整",
+                )) is not None
+            return True
+        except Exception as exc:
+            logger.error("设置今日饮水总量失败: %s", exc)
+            return False
 
     def get_today_records(self, user_id: str) -> List[HydrationRecord]:
         """获取今日饮水记录。"""
@@ -107,12 +157,13 @@ class HydrationStore:
                 """, (user_id, today))
                 type_stats = {r[0]: float(r[1]) for r in cur.fetchall()}
 
+                goal_ml = self._get_goal_ml(user_id)
                 return {
                     "total_ml": round(float(total_ml), 1),
                     "record_count": int(count),
-                    "goal_ml": DEFAULT_DAILY_GOAL_ML,
-                    "remaining_ml": max(0.0, DEFAULT_DAILY_GOAL_ML - float(total_ml)),
-                    "percentage": min(100.0, round(float(total_ml) / DEFAULT_DAILY_GOAL_ML * 100, 1)),
+                    "goal_ml": goal_ml,
+                    "remaining_ml": max(0.0, goal_ml - float(total_ml)),
+                    "percentage": min(100.0, round(float(total_ml) / goal_ml * 100, 1)),
                     "type_breakdown": type_stats,
                 }
         except Exception as exc:
@@ -149,12 +200,13 @@ class HydrationStore:
                 """, (user_id, day_start, day_end))
                 type_stats = {r[0]: float(r[1]) for r in cur.fetchall()}
 
+                goal_ml = self._get_goal_ml(user_id)
                 return {
                     "total_ml": round(float(total_ml), 1),
                     "record_count": int(count),
-                    "goal_ml": DEFAULT_DAILY_GOAL_ML,
-                    "remaining_ml": max(0.0, DEFAULT_DAILY_GOAL_ML - float(total_ml)),
-                    "percentage": min(100.0, round(float(total_ml) / DEFAULT_DAILY_GOAL_ML * 100, 1)),
+                    "goal_ml": goal_ml,
+                    "remaining_ml": max(0.0, goal_ml - float(total_ml)),
+                    "percentage": min(100.0, round(float(total_ml) / goal_ml * 100, 1)),
                     "type_breakdown": type_stats,
                 }
         except Exception as exc:

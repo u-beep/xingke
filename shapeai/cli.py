@@ -65,10 +65,21 @@ def _cmd_serve(args) -> int:
 
     try:
         import uvicorn
-        from .api import create_app
 
-        app = create_app()
-        uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+        if args.reload:
+            # 热重载模式必须传 import string，传 app 实例会被 uvicorn 拒绝
+            # （会话/模型等有状态对象在重载时会整体重建，更安全）。
+            uvicorn.run(
+                "shapeai.api.asgi:app",
+                host=args.host,
+                port=args.port,
+                reload=True,
+            )
+        else:
+            from .api import create_app
+
+            app = create_app()
+            uvicorn.run(app, host=args.host, port=args.port)
         return 0
     except ImportError:
         print("错误: 需要安装 uvicorn 才能启动API服务")

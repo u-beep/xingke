@@ -142,10 +142,11 @@ class SessionStore:
                     json.dumps(session.get("user_profile", {}), ensure_ascii=False),
                 ))
 
-                # 同步消息：先删除旧的再插入全部（保证一致性）
+                # 同步消息：先删除旧的再插入全部（history 为空时同样删除，
+                # 否则 clear_history 置空历史后旧消息仍留在库中，缓存失效后"复活"）
+                cur.execute("DELETE FROM messages WHERE session_id = %s", (session_id,))
                 history = session.get("history", [])
                 if history:
-                    cur.execute("DELETE FROM messages WHERE session_id = %s", (session_id,))
                     args_list = []
                     for msg in history:
                         args_list.append((
@@ -494,6 +495,27 @@ class SessionStore:
         session["memory"]["short_term"] = []
         self.save(session)
         return session
+
+    def clear_by_date(self, user_id: str, date_str: str | None = None) -> list[str]:
+        """清空用户指定日期的所有会话历史（当天可能存在多个会话）。
+
+        Args:
+            user_id: 用户ID
+            date_str: 日期字符串 YYYY-MM-DD，None 时默认今天
+        Returns:
+            成功清空的会话 ID 列表
+        """
+        sessions = self.list_by_date(user_id, date_str)
+        cleared_ids: list[str] = []
+        for summary in sessions:
+            try:
+                self.clear_history(summary["id"])
+                cleared_ids.append(summary["id"])
+            except Exception as exc:
+                logger.warning("清空会话 %s 失败: %s", summary["id"], exc)
+        logger.info("按日期清空会话: user=%s date=%s 清空 %d/%d 个会话",
+                    user_id, date_str or "今天", len(cleared_ids), len(sessions))
+        return cleared_ids
 
     # ─── 文件系统回退方法 ───
 

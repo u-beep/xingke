@@ -181,10 +181,24 @@ export const chatApi = {
    */
   async extract(taskId: string, signal?: AbortSignal): Promise<{
     status: 'ready' | 'pending' | 'none'
+    pending_entry_id?: string | null
     diet_data: { foods: any[]; total_calories: number } | null
     water_data: { amount_ml: number; drink_type: string; description: string } | null
   }> {
     return request<any>(`${API_BASE}/chat/extract?task_id=${encodeURIComponent(taskId)}`, { signal })
+  },
+
+  /** 将待确认的饮食或饮水录入标记为已确认/已忽略，供刷新恢复时使用。 */
+  async resolvePendingEntry(data: {
+    session_id: string
+    pending_entry_id: string
+    entry_type: 'diet' | 'water'
+    status: 'confirmed' | 'dismissed'
+  }): Promise<{ success: boolean; status: string }> {
+    return request<any>(`${API_BASE}/chat/pending-entry/resolve`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
   },
 
   /** 终止正在生成的对话任务（用户点击"停止生成"） */
@@ -203,10 +217,16 @@ export const chatApi = {
     return request<any>(`${API_BASE}/chat/sessions/${sessionId}`)
   },
 
-  /** 清空会话历史 */
-  async clearSession(sessionId: string): Promise<any> {
-    return request<any>(`${API_BASE}/chat/sessions/${sessionId}`, { method: 'DELETE' })
-  },
+/** 清空会话历史 */
+async clearSession(sessionId: string): Promise<any> {
+return request<any>(`${API_BASE}/chat/sessions/${sessionId}`, { method: 'DELETE' })
+},
+
+/** 清空某天所有会话历史（当天可能存在多个会话，需全部清空） */
+async clearSessionsByDate(userId: string, date?: string): Promise<{ cleared: number }> {
+const query = buildQuery({ user_id: userId, ...(date ? { date } : {}) })
+return request<any>(`${API_BASE}/chat/sessions/by-date${query}`, { method: 'DELETE' })
+},
 
   /** 删除会话 */
   async deleteSession(sessionId: string): Promise<any> {
@@ -245,6 +265,26 @@ export const chatApi = {
   }> {
     const query = buildQuery({ user_id: userId, date })
     return request<any>(`${API_BASE}/chat/sessions/by-date${query}`)
+  },
+
+  /** 追加前端本地流程（拍照识别等）产生的消息到当天会话并持久化 */
+  async appendMessages(
+    userId: string,
+    sessionId: string | null,
+    messages: Array<{ role: 'user' | 'assistant'; content: string; args?: any; image_key?: string }>,
+  ): Promise<{ success: boolean; session_id: string; message_count: number }> {
+    return request<any>(`${API_BASE}/chat/append-messages`, {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, session_id: sessionId, messages }),
+    })
+  },
+
+  /** 上传聊天图片到对象存储（识图预览持久化，刷新后可还原） */
+  async uploadChatImage(imageDataUrl: string): Promise<{ image_key: string; image_url: string }> {
+    return request<any>(`${API_BASE}/chat/upload-image`, {
+      method: 'POST',
+      body: JSON.stringify({ image_base64: imageDataUrl }),
+    })
   },
 }
 
@@ -462,17 +502,31 @@ export const dietApi = {
     return request<any>(`${API_BASE}/diet/history${query}`)
   },
 
-  /** 按日期获取饮食统计 */
-  async summary(userId: string, date?: string): Promise<{
-    total_calories: number
-    total_protein_g: number
-    total_carbs_g: number
-    total_fat_g: number
-    record_count: number
-    meal_breakdown: Record<string, number>
-  }> {
+/** 按日期获取饮食统计 */
+async summary(userId: string, date?: string): Promise<{
+total_calories: number
+total_protein_g: number
+total_carbs_g: number
+total_fat_g: number
+record_count: number
+meal_breakdown: Record<string, number>
+budget?: number
+remaining?: number
+protein_target_g?: number
+carbs_target_g?: number
+fat_target_g?: number
+budget_source?: string
+}> {
     const query = buildQuery({ user_id: userId, date })
     return request<any>(`${API_BASE}/diet/summary${query}`)
+  },
+
+  /** 调整三大营养素每日目标（保存后预算热量自动重算） */
+  async setMacroTargets(userId: string, proteinG: number, carbsG: number, fatG: number): Promise<{ success: boolean; targets: { protein_g: number; carbs_g: number; fat_g: number }; budget: number }> {
+    return request<any>(`${API_BASE}/diet/macro-targets`, {
+      method: 'PUT',
+      body: JSON.stringify({ user_id: userId, protein_g: proteinG, carbs_g: carbsG, fat_g: fatG }),
+    })
   },
 
   /** 确认计入今日热量统计 */
@@ -569,6 +623,14 @@ export const profileApi = {
     return request<any>(`${API_BASE}/profile/me`)
   },
 
+  /** 更新当前用户资料（支持部分字段，如每日饮水目标 water_intake_ml） */
+  async update(data: { water_intake_ml?: number; daily_calorie_budget?: number } & Record<string, unknown>): Promise<any> {
+    return request<any>(`${API_BASE}/profile/me`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
   /** 获取每日热量目标预算（含 TDEE 建议值） */
   async getCalorieBudget(userId: string): Promise<{
     user_id: string
@@ -613,6 +675,14 @@ export const waterApi = {
     return request<any>(`${API_BASE}/hydration/record`, {
       method: 'POST',
       body: JSON.stringify(data),
+    })
+  },
+
+  /** 手动设置今日饮水总量（补录差值或重置记录） */
+  async setManualTotal(totalMl: number): Promise<{ success: boolean; summary: WaterSummary }> {
+    return request<any>(`${API_BASE}/hydration/manual-total`, {
+      method: 'POST',
+      body: JSON.stringify({ total_ml: totalMl }),
     })
   },
 
@@ -1512,6 +1582,16 @@ export function fileToBase64(file: File): Promise<string> {
       // 去掉 data:image/xxx;base64, 前缀
       resolve(result.split(',')[1])
     }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+/** 将 File 转为 dataURL（保留 data:image/xxx;base64, 前缀，可直接用于 <img> 展示） */
+export function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
     reader.onerror = reject
     reader.readAsDataURL(file)
   })

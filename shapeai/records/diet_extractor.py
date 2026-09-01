@@ -242,30 +242,7 @@ class DietExtractor:
         import re
 
         matched_foods = []
-        msg_lower = user_message.lower()
-        matched_short_names = set()  # 已模糊匹配的短名，避免重复
-
-        # 遍历食物数据库，查找用户消息中提到的食物
-        for food_name, nutrition in self._food_db.items():
-            # 精确匹配或模糊匹配（食物名在用户消息中出现）
-            if food_name in user_message:
-                matched = True
-            # 模糊匹配：去掉后缀再匹配（如“奶”匹配“牛奶”）
-            elif len(food_name) >= 2 and food_name[-1] in user_message:
-                # 检查食物名的最后一个字是否作为独立词出现
-                # 如“牛奶” -> 用户说“一包奶”
-                short_name = food_name[-1:]
-                if short_name in user_message and short_name not in matched_short_names:
-                    matched = True
-                    matched_short_names.add(short_name)
-                    food_name = food_name  # 仍然用完整名
-            else:
-                matched = False
-
-            if not matched:
-                continue
-
-            # 估算分量：查找食物名前面的量词
+        for food_name, nutrition in self._match_foods_by_name(user_message, self._food_db):
             amount_g = 100  # 默认 100g
             portion = 1.0
 
@@ -332,27 +309,49 @@ class DietExtractor:
 
         return self._save_foods(user_id, matched_foods)
 
+    @staticmethod
+    def _match_foods_by_name(user_message: str, food_db: dict) -> list[tuple[str, dict]]:
+        """按名称匹配用户消息中提到的食物。
+
+        匹配规则：
+        1. 完整食物名出现在消息中 → 直接命中；
+        2. 单字兜底：食物名尾字出现在消息中 → 命中（如说“蛋”指“鸡蛋”）。
+           兜底前先把已完整命中的食物名从消息中剔除，避免“米饭”的“米”
+           被“玉米”的尾字规则误命中（用户没吃玉米却多出一条记录）。
+        """
+        matched: list[tuple[str, dict]] = []
+        matched_short_names = set()
+
+        exact_food_names = {
+            food_name for food_name in food_db
+            if food_name in user_message
+        }
+        exact_suffixes = {n[-1:] for n in exact_food_names if len(n) >= 2}
+        # 剔除已完整命中的食物名后，剩余文本只用于单字兜底
+        remainder = user_message
+        for name in sorted(exact_food_names, key=len, reverse=True):
+            remainder = remainder.replace(name, " ")
+
+        for food_name, nutrition in food_db.items():
+            if food_name in exact_food_names:
+                matched.append((food_name, nutrition))
+                continue
+            if len(food_name) >= 2 and food_name[-1] in remainder:
+                short_name = food_name[-1:]
+                if (
+                    short_name not in exact_suffixes
+                    and short_name not in matched_short_names
+                ):
+                    matched.append((food_name, nutrition))
+                    matched_short_names.add(short_name)
+        return matched
+
     def _rule_based_extract_foods(self, user_message: str) -> list:
         """规则引擎：只提取食物列表，不写入数据库。"""
         import re
 
         matched_foods = []
-        matched_short_names = set()
-
-        for food_name, nutrition in self._food_db.items():
-            if food_name in user_message:
-                matched = True
-            elif len(food_name) >= 2 and food_name[-1] in user_message:
-                short_name = food_name[-1:]
-                if short_name in user_message and short_name not in matched_short_names:
-                    matched = True
-                    matched_short_names.add(short_name)
-            else:
-                matched = False
-
-            if not matched:
-                continue
-
+        for food_name, nutrition in self._match_foods_by_name(user_message, self._food_db):
             amount_g = 100
             portion = 1.0
             idx = user_message.find(food_name)
@@ -425,7 +424,7 @@ class DietExtractor:
         if saved_count > 0:
             today_summary = self.store.get_today_summary(user_id)
             today_total = today_summary.get("total_calories", 0)
-            food_names = "、".join(f["food_name"] for f in matched_foods)
+            food_names = "、".join(f["food_name"] for f in foods)
             msg = f"已记录饮食：{food_names}（{total_calories:.0f}kcal），今日累计摄入 {today_total:.0f}kcal"
             logger.info("用户 %s 饮食记录已自动保存(规则引擎): %d 项, 本次 %dkcal, 今日累计 %dkcal",
                         user_id, saved_count, total_calories, today_total)

@@ -1,16 +1,14 @@
 import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { getCurrentUserId } from '../../services/authStore'
 import {
-  Flag,
-  Trash2,
-  Send,
-  Plus,
-  Mic,
-  Camera,
-  Scale,
-  CalendarDays,
-  ChefHat,
-  Copy,
+Flag,
+Trash2,
+Send,
+Plus,
+Camera,
+Scale,
+Copy,
   ThumbsUp,
   ThumbsDown,
   ChevronLeft,
@@ -27,10 +25,11 @@ import {
   Plus as PlusIcon,
   Trash,
   Droplets,
+  Pencil,
 } from 'lucide-react'
 import { mockGoalProgress } from '../../data/mockData'
 import { useChat } from '../../store/ChatContext'
-import { exerciseApi, exercisePlanApi, workoutApi, type ExerciseCalorieGroup, type WorkoutTemplateInfo, type ExerciseRecordInfo, type PlanSummary } from '../../services/api'
+import { exerciseApi, exercisePlanApi, workoutApi, profileApi, waterApi, dietApi, weightApi, type ExerciseCalorieGroup, type WorkoutTemplateInfo, type ExerciseRecordInfo, type PlanSummary } from '../../services/api'
 import CalendarPanel from '../../components/CalendarPanel/CalendarPanel'
 import './AIChat.css'
 
@@ -46,6 +45,56 @@ const PANEL_CARDS = [
   { id: 'goal', label: '目标进度' },
 ]
 const ALL_CARD_IDS = PANEL_CARDS.map((c) => c.id)
+
+// 饮品类型英文 -> 中文
+const DRINK_TYPE_LABEL: Record<string, string> = {
+water: '水',
+tea: '茶',
+coffee: '咖啡',
+milk: '牛奶',
+juice: '果汁',
+soda: '碳酸饮料',
+soup: '汤',
+other: '其他',
+}
+
+/** Date → 本地时区 YYYY-MM-DD */
+function isoOf(d: Date): string {
+return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** 体重建议：把输入值视作当天新记录，与最近一次记录和本周趋势对比，实时生成反馈文案 */
+function buildWeightAdvice(
+input: string,
+info: { current: number | null; target: number | null; weekPoints: Array<{ iso: string; weight: number }> },
+): string {
+const n = parseFloat(input)
+if (isNaN(n) || n <= 0) return '输入体重后，这里将结合本周变化实时给出建议'
+const tips: string[] = []
+const last = info.weekPoints.length ? info.weekPoints[info.weekPoints.length - 1].weight : info.current
+if (last != null) {
+const diff = +(n - last).toFixed(1)
+if (Math.abs(diff) < 0.1) tips.push('与最近一次记录基本持平')
+else if (diff < 0) tips.push(`较最近一次记录下降 ${Math.abs(diff)}kg`)
+else tips.push(`较最近一次记录上升 ${diff}kg`)
+}
+const wp = info.weekPoints
+if (wp.length >= 2) {
+const weekDiff = +(n - wp[0].weight).toFixed(1)
+if (weekDiff <= -0.2) tips.push(`本周累计下降 ${Math.abs(weekDiff)}kg，趋势良好，保持当前节奏`)
+else if (weekDiff >= 0.2) tips.push(`本周累计上升 ${weekDiff}kg，建议留意饮食与运动平衡`)
+else tips.push('本周体重整体稳定')
+} else if (last != null) {
+tips.push('坚持每天记录，就能看到完整趋势')
+}
+if (info.target != null) {
+const toTarget = +(n - info.target).toFixed(1)
+if (Math.abs(toTarget) <= 0.2) tips.push('已达成目标体重，可转入维持期')
+else if (toTarget > 0) tips.push(`距目标体重还差 ${toTarget}kg，继续加油`)
+else tips.push(`已低于目标 ${Math.abs(toTarget)}kg，注意别减过头`)
+}
+return tips.join('；')
+}
 
 /** 按用户隔离持久化卡片展示配置 */
 function panelCardsStorageKey(): string {
@@ -75,9 +124,12 @@ interface Message {
   cardData?: any
   dietData?: { foods: any[]; total_calories: number } | null
   waterData?: { amount_ml: number; drink_type: string; description: string } | null
+  /** 图片消息预览（dataURL，仅前端展示） */
+  imageUrl?: string
 }
 
 export default function AIChat() {
+  const navigate = useNavigate()
   // 从全局 Context 获取持久化状态（切换 tab 不会丢失）
   const {
     messages,
@@ -89,7 +141,6 @@ export default function AIChat() {
     waterSummary,
     sendChatMessage,
     recognizeFoodImage,
-    generateRecipe,
     clearChat,
     loadSessionByDate,
     confirmDiet,
@@ -97,20 +148,27 @@ export default function AIChat() {
     confirmWater,
     dismissWater,
     stopGeneration,
+    refreshSummaries,
   } = useChat()
 
   // 仅本页的 UI 局部状态
   const [input, setInput] = useState('')
-  const [showWeightModal, setShowWeightModal] = useState(false)
-  const [showRecipeModal, setShowRecipeModal] = useState(false)
-  const [showConfirmClear, setShowConfirmClear] = useState(false)
+const [showWeightModal, setShowWeightModal] = useState(false)
+const [showConfirmClear, setShowConfirmClear] = useState(false)
   const [rightPanelVisible, setRightPanelVisible] = useState(true)
 const [visibleCards, setVisibleCards] = useState<string[]>(loadVisibleCards)
 const [showCardPicker, setShowCardPicker] = useState(false)
   const [calendarVisible, setCalendarVisible] = useState(false)
   const [weightInput, setWeightInput] = useState('')
-  const [recipeDays, setRecipeDays] = useState<'1' | '7'>('1')
-  // 运动计划状态
+const [savingWeight, setSavingWeight] = useState(false)
+// 体重信息（当前/起始/目标/近 7 天记录点），驱动目标进度卡与弹窗实时建议
+const [bodyInfo, setBodyInfo] = useState<{
+current: number | null
+target: number | null
+start: number | null
+weekPoints: Array<{ iso: string; weight: number }>
+}>({ current: null, target: null, start: null, weekPoints: [] })
+    // 运动计划状态
   const [exerciseGroup, setExerciseGroup] = useState<ExerciseCalorieGroup | null>(null)
   const [planSummary, setPlanSummary] = useState<PlanSummary>({
     total_calories: 0,
@@ -128,9 +186,13 @@ const [showCardPicker, setShowCardPicker] = useState(false)
   const [selectedType, setSelectedType] = useState<string>('cardio')
   const [selectedExercise, setSelectedExercise] = useState<string>('')
   const [duration, setDuration] = useState<number>(30)
-  const [templates, setTemplates] = useState<WorkoutTemplateInfo[]>([])
-  const [showSaveTemplate, setShowSaveTemplate] = useState(false)
-  const [templateName, setTemplateName] = useState('')
+const [templates, setTemplates] = useState<WorkoutTemplateInfo[]>([])
+const [showSaveTemplate, setShowSaveTemplate] = useState(false)
+const [templateName, setTemplateName] = useState('')
+// 目标行内编辑：'protein'/'carbs'/'fat' = 三大营养素目标，'water' = 饮水目标，'waterIntake' = 饮水已摄入
+const [editingGoal, setEditingGoal] = useState<'protein' | 'carbs' | 'fat' | 'water' | 'waterIntake' | null>(null)
+const [goalInput, setGoalInput] = useState('')
+const [savingGoal, setSavingGoal] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -142,11 +204,12 @@ const [showCardPicker, setShowCardPicker] = useState(false)
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // 页面加载后拉取当天会话（无历史时不自动发问候，保持空对话）
-  useEffect(() => {
-    // loadTodaySession 已在 ChatContext 的 useEffect 中触发
-    // 这里不需要额外操作
-  }, [])
+// 每次进入页面时刷新热量/饮水统计（Context 数据可能因其他页面的增删改而过期）
+useEffect(() => {
+refreshSummaries()
+fetchBodyInfo()
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [])
 
   // 加载运动列表和今日计划
   useEffect(() => {
@@ -220,12 +283,27 @@ const loadExercisePlan = async (date?: string) => {
   const typeLabels: Record<string, string> = { cardio: '有氧运动', strength: '力量训练', anaerobic: '无氧运动' }
   const typeColors: Record<string, string> = { cardio: '#5b9bd5', strength: '#e8746b', anaerobic: '#f0a732' }
 
-  // 计算热量缺口 = 摄入热量 - (BMR + 运动消耗)
-  const bmr = 1674 // 基础代谢率（根据用户数据计算）
-  const exerciseCalories = planSummary.total_calories
-  const intakeCalories = calorieSummary.total_calories
-  const totalBurn = bmr + exerciseCalories
-  const calorieGap = Math.round(totalBurn - intakeCalories)
+// 计算热量缺口 = 摄入热量 - (BMR + 运动消耗)
+const bmr = 1674 // 基础代谢率（根据用户数据计算）
+const exerciseCalories = planSummary.total_calories
+const intakeCalories = calorieSummary.total_calories
+const totalBurn = bmr + exerciseCalories
+const calorieGap = Math.round(totalBurn - intakeCalories)
+
+// —— 目标进度卡（真实数据，无数据时回退 mock）——
+const goalPct = (() => {
+const { current, target, start } = bodyInfo
+if (!current || !target) return mockGoalProgress.percentage
+if (start == null || start === target) return 0
+const pct = Math.round(((start - current) / (start - target)) * 100)
+return Math.max(0, Math.min(100, pct))
+})()
+const goalWeeklyChange = bodyInfo.weekPoints.length >= 2
+? +(bodyInfo.weekPoints[bodyInfo.weekPoints.length - 1].weight - bodyInfo.weekPoints[0].weight).toFixed(1)
+: null
+
+// 弹窗内实时建议：把输入值视作当天新记录，与最近一次记录和本周趋势对比
+const weightAdvice = buildWeightAdvice(weightInput, bodyInfo)
 
   // 运动消耗完成度：已完成消耗相对计划预计的比例。
   const exerciseBurnPercent = planSummary.planned_calories > 0
@@ -330,23 +408,18 @@ const loadExercisePlan = async (date?: string) => {
     }
   }
 
-  /** 快捷功能 */
-  const handleQuickAction = (action: string) => {
-    switch (action) {
-      case 'diet':
-        fileInputRef.current?.click()
-        break
-      case 'weight':
-        setShowWeightModal(true)
-        break
-      case 'plan':
-        sendChatMessage('请给我今日的饮食和运动总览')
-        break
-      case 'recipe':
-        setShowRecipeModal(true)
-        break
-    }
-  }
+/** 快捷功能 */
+const handleQuickAction = (action: string) => {
+switch (action) {
+case 'diet':
+fileInputRef.current?.click()
+break
+case 'weight':
+setShowWeightModal(true)
+fetchBodyInfo()
+break
+}
+}
 
   /** 图片文件选择 → 食物识别 */
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -365,28 +438,117 @@ const loadExercisePlan = async (date?: string) => {
     }
   }
 
-  /** 体重录入 */
-  const handleWeightSubmit = async () => {
-    if (!weightInput) return
-    const weight = weightInput
-    setShowWeightModal(false)
-    setWeightInput('')
-    await sendChatMessage(`请帮我记录今日体重：${weight}kg，并给出趋势反馈`)
-  }
+/** 拉取体重信息（当前/起始/目标/近 7 天记录点，每天取最后一条） */
+const fetchBodyInfo = async () => {
+try {
+const [profileRes, histRes] = await Promise.all([
+profileApi.me().catch(() => null),
+weightApi.history(30, 200).catch(() => null),
+])
+const records: any[] = (histRes?.records || []).slice().reverse() // 接口倒序 → 时间升序
+const byDay = new Map<string, number>()
+let first: number | null = null
+let last: number | null = null
+for (const r of records) {
+if (r.weight_kg == null) continue
+const w = Number(r.weight_kg)
+const iso = isoOf(new Date(r.recorded_at))
+if (first == null) first = w
+byDay.set(iso, w)
+last = w
+}
+const weekPoints = [...byDay.entries()]
+.sort((a, b) => (a[0] < b[0] ? -1 : 1))
+.slice(-7)
+.map(([iso, weight]) => ({ iso, weight }))
+setBodyInfo({
+current: last,
+target: Number(profileRes?.profile?.target_weight_kg) || null,
+start: first,
+weekPoints,
+})
+} catch {
+// 静默失败
+}
+}
 
-  /** 生成食谱 */
-  const handleGenerateRecipe = async () => {
-    setShowRecipeModal(false)
-    await generateRecipe(recipeDays === '7' ? 7 : 1)
-  }
+/** 体重录入 */
+const handleWeightSubmit = async () => {
+const weight = parseFloat(weightInput)
+if (isNaN(weight) || weight <= 0 || savingWeight) return
+setSavingWeight(true)
+try {
+// 先落库，当前体重/目标进度卡实时更新
+await weightApi.record({ weight_kg: weight })
+await fetchBodyInfo()
+} catch {
+// 落库失败不阻断，AI 对话中仍会尝试记录
+} finally {
+setSavingWeight(false)
+}
+setShowWeightModal(false)
+setWeightInput('')
+await sendChatMessage(`我刚记录了今日体重：${weight}kg，请结合我这一周的体重变化给出趋势反馈和建议`)
+}
 
-  /** 清空对话 */
+/** 清空对话 */
   const handleClearChat = async () => {
     setShowConfirmClear(false)
     await clearChat()
   }
 
-  const caloriePercent = Math.min(100, Math.round((calorieSummary.total_calories / calorieSummary.budget) * 100))
+  const caloriePercent = calorieSummary.budget > 0
+  ? Math.round((calorieSummary.total_calories / calorieSummary.budget) * 100)
+  : 0
+// 摄入超过预算时剩余为负数，显示为“超出”
+
+// ─── 目标行内编辑 ───
+const startEditGoal = (kind: 'protein' | 'carbs' | 'fat' | 'water' | 'waterIntake') => {
+setEditingGoal(kind)
+if (kind === 'protein') setGoalInput(String(calorieSummary.protein_target_g))
+else if (kind === 'carbs') setGoalInput(String(calorieSummary.carbs_target_g))
+else if (kind === 'fat') setGoalInput(String(calorieSummary.fat_target_g))
+else if (kind === 'water') setGoalInput(String(waterSummary.goal_ml))
+else setGoalInput(String(Math.round(waterSummary.total_ml)))
+}
+
+const cancelEditGoal = () => {
+  setEditingGoal(null)
+  setGoalInput('')
+}
+
+const saveGoal = async () => {
+const n = Math.round(Number(goalInput))
+// 饮水已摄入允许设为 0（清空），其他目标必须大于 0
+const invalid = Number.isNaN(n) || n < 0 || (editingGoal !== 'waterIntake' && n <= 0)
+if (invalid || savingGoal) {
+cancelEditGoal()
+return
+}
+const kind = editingGoal
+setSavingGoal(true)
+try {
+if (kind === 'protein' || kind === 'carbs' || kind === 'fat') {
+// 保存营养素目标，后端自动重算热量预算
+const p = kind === 'protein' ? n : calorieSummary.protein_target_g
+const c = kind === 'carbs' ? n : calorieSummary.carbs_target_g
+const f = kind === 'fat' ? n : calorieSummary.fat_target_g
+await dietApi.setMacroTargets(getCurrentUserId(), p, c, f)
+await refreshSummaries()
+} else if (kind === 'water') {
+await profileApi.update({ water_intake_ml: n })
+await refreshSummaries()
+} else if (kind === 'waterIntake') {
+await waterApi.setManualTotal(n)
+await refreshSummaries()
+}
+cancelEditGoal()
+} catch {
+alert('保存失败，请稍后再试')
+} finally {
+setSavingGoal(false)
+}
+}
 
   return (
     <div className="ai-chat">
@@ -478,19 +640,14 @@ const loadExercisePlan = async (date?: string) => {
         {/* 快捷功能栏 + 输入区 */}
         <div className="chat-input-zone">
           <div className="quick-actions">
-            <button className="quick-btn" onClick={() => handleQuickAction('diet')}>
-              <Camera size={16} /> 记饮食
-            </button>
-            <button className="quick-btn" onClick={() => handleQuickAction('weight')}>
-              <Scale size={16} /> 记体重
-            </button>
-            <button className="quick-btn" onClick={() => handleQuickAction('plan')}>
-              <CalendarDays size={16} /> 今日计划
-            </button>
-            <button className="quick-btn" onClick={() => handleQuickAction('recipe')}>
-              <ChefHat size={16} /> 生成食谱
-            </button>
-          </div>
+<button className="quick-btn" onClick={() => handleQuickAction('diet')}>
+<Camera size={16} /> 记饮食
+</button>
+{/* 记体重入口暂时隐藏，功能保留（handleQuickAction('weight') 可随时恢复） */}
+{/* <button className="quick-btn" onClick={() => handleQuickAction('weight')}>
+<Scale size={16} /> 记体重
+</button> */}
+</div>
 
           <div
             className="chat-input-wrapper"
@@ -508,9 +665,6 @@ const loadExercisePlan = async (date?: string) => {
               onKeyDown={handleKeyDown}
               rows={1}
             />
-            <button className="chat-input__mic" title="语音输入">
-              <Mic size={18} />
-            </button>
             {loading ? (
               <button
                 className="chat-input__send chat-input__send--stop active"
@@ -544,7 +698,7 @@ const loadExercisePlan = async (date?: string) => {
               <span className="info-card__title">
                 <Flame size={16} /> {currentDate.slice(5)} 热量
               </span>
-<span className="info-card__link">详情 →</span>
+<button type="button" className="info-card__link" onClick={() => navigate('/diet')} title="查看饮食记录详情">详情 →</button>
 </div>
             <div className="calorie-ring">
               <svg viewBox="0 0 120 120" className="calorie-ring__svg">
@@ -557,7 +711,7 @@ const loadExercisePlan = async (date?: string) => {
                   stroke="#ffc300"
                   strokeWidth="10"
                   strokeLinecap="round"
-                  strokeDasharray={`${(caloriePercent / 100) * 314} 314`}
+                  strokeDasharray={`${Math.min(100, caloriePercent) * 3.14} 314`}
                   transform="rotate(-90 60 60)"
                 />
               </svg>
@@ -573,12 +727,17 @@ const loadExercisePlan = async (date?: string) => {
               </div>
               <div className="calorie-stat">
                 <span className="calorie-stat__label">预算</span>
-                <span className="calorie-stat__value">{calorieSummary.budget}</span>
+                <span
+                  className="calorie-stat__value"
+                  title="由三大营养素目标自动计算，调整目标即可更新"
+                >
+                  {calorieSummary.budget}
+                </span>
               </div>
               <div className="calorie-stat">
-                <span className="calorie-stat__label">剩余</span>
+                <span className="calorie-stat__label">{calorieSummary.remaining >= 0 ? '剩余' : '超出'}</span>
                 <span className="calorie-stat__value calorie-stat__value--accent">
-                  {calorieSummary.remaining}
+                  {Math.abs(calorieSummary.remaining)}
                 </span>
               </div>
             </div>
@@ -593,10 +752,41 @@ const loadExercisePlan = async (date?: string) => {
                 <div className="macro-item__bar">
                   <div
                     className="macro-item__fill macro-item__fill--protein"
-                    style={{ width: `${Math.min(100, (calorieSummary.total_protein_g / 120) * 100)}%` }}
+                    style={{ width: `${Math.min(100, (calorieSummary.total_protein_g / calorieSummary.protein_target_g) * 100)}%` }}
                   />
                 </div>
-                <span className="macro-item__target">目标 120g</span>
+                {editingGoal === 'protein' ? (
+                  <span className="goal-edit">
+                    <input
+                      className="goal-edit__input"
+                      type="number"
+                      min={1}
+                      autoFocus
+                      value={goalInput}
+                      disabled={savingGoal}
+                      onChange={(e) => setGoalInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveGoal()
+                        if (e.key === 'Escape') cancelEditGoal()
+                      }}
+                    />
+                    <button className="goal-edit__btn goal-edit__btn--ok" onClick={saveGoal} title="保存" disabled={savingGoal}>
+                      {savingGoal ? <Loader2 size={12} className="spin" /> : <Check size={12} />}
+                    </button>
+                    <button className="goal-edit__btn" onClick={cancelEditGoal} title="取消">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="macro-item__target goal-editable"
+                    onClick={() => startEditGoal('protein')}
+                    title="点击调整蛋白质目标，预算热量自动更新"
+                  >
+                    目标 {calorieSummary.protein_target_g}g
+                    <Pencil size={11} className="goal-editable__icon" />
+                  </button>
+                )}
               </div>
               <div className="macro-item">
                 <div className="macro-item__header">
@@ -606,10 +796,41 @@ const loadExercisePlan = async (date?: string) => {
                 <div className="macro-item__bar">
                   <div
                     className="macro-item__fill macro-item__fill--carbs"
-                    style={{ width: `${Math.min(100, (calorieSummary.total_carbs_g / 200) * 100)}%` }}
+                    style={{ width: `${Math.min(100, (calorieSummary.total_carbs_g / calorieSummary.carbs_target_g) * 100)}%` }}
                   />
                 </div>
-                <span className="macro-item__target">目标 200g</span>
+                {editingGoal === 'carbs' ? (
+                  <span className="goal-edit">
+                    <input
+                      className="goal-edit__input"
+                      type="number"
+                      min={1}
+                      autoFocus
+                      value={goalInput}
+                      disabled={savingGoal}
+                      onChange={(e) => setGoalInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveGoal()
+                        if (e.key === 'Escape') cancelEditGoal()
+                      }}
+                    />
+                    <button className="goal-edit__btn goal-edit__btn--ok" onClick={saveGoal} title="保存" disabled={savingGoal}>
+                      {savingGoal ? <Loader2 size={12} className="spin" /> : <Check size={12} />}
+                    </button>
+                    <button className="goal-edit__btn" onClick={cancelEditGoal} title="取消">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="macro-item__target goal-editable"
+                    onClick={() => startEditGoal('carbs')}
+                    title="点击调整碳水目标，预算热量自动更新"
+                  >
+                    目标 {calorieSummary.carbs_target_g}g
+                    <Pencil size={11} className="goal-editable__icon" />
+                  </button>
+                )}
               </div>
               <div className="macro-item">
                 <div className="macro-item__header">
@@ -619,10 +840,41 @@ const loadExercisePlan = async (date?: string) => {
                 <div className="macro-item__bar">
                   <div
                     className="macro-item__fill macro-item__fill--fat"
-                    style={{ width: `${Math.min(100, (calorieSummary.total_fat_g / 60) * 100)}%` }}
+                    style={{ width: `${Math.min(100, (calorieSummary.total_fat_g / calorieSummary.fat_target_g) * 100)}%` }}
                   />
                 </div>
-                <span className="macro-item__target">目标 60g</span>
+                {editingGoal === 'fat' ? (
+                  <span className="goal-edit">
+                    <input
+                      className="goal-edit__input"
+                      type="number"
+                      min={1}
+                      autoFocus
+                      value={goalInput}
+                      disabled={savingGoal}
+                      onChange={(e) => setGoalInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveGoal()
+                        if (e.key === 'Escape') cancelEditGoal()
+                      }}
+                    />
+                    <button className="goal-edit__btn goal-edit__btn--ok" onClick={saveGoal} title="保存" disabled={savingGoal}>
+                      {savingGoal ? <Loader2 size={12} className="spin" /> : <Check size={12} />}
+                    </button>
+                    <button className="goal-edit__btn" onClick={cancelEditGoal} title="取消">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="macro-item__target goal-editable"
+                    onClick={() => startEditGoal('fat')}
+                    title="点击调整脂肪目标，预算热量自动更新"
+                  >
+                    目标 {calorieSummary.fat_target_g}g
+                    <Pencil size={11} className="goal-editable__icon" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -671,11 +923,75 @@ const loadExercisePlan = async (date?: string) => {
             <div className="water-stats">
               <div className="water-stat">
                 <span className="water-stat__label">已摄入</span>
-                <span className="water-stat__value">{Math.round(waterSummary.total_ml)} ml</span>
+                {editingGoal === 'waterIntake' ? (
+                  <span className="goal-edit">
+                    <input
+                      className="goal-edit__input goal-edit__input--water"
+                      type="number"
+                      min={0}
+                      autoFocus
+                      value={goalInput}
+                      disabled={savingGoal}
+                      onChange={(e) => setGoalInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveGoal()
+                        if (e.key === 'Escape') cancelEditGoal()
+                      }}
+                    />
+                    <span className="goal-edit__unit">ml</span>
+                    <button className="goal-edit__btn goal-edit__btn--ok" onClick={saveGoal} title="保存" disabled={savingGoal}>
+                      {savingGoal ? <Loader2 size={12} className="spin" /> : <Check size={12} />}
+                    </button>
+                    <button className="goal-edit__btn" onClick={cancelEditGoal} title="取消">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="water-stat__value goal-editable"
+                    onClick={() => startEditGoal('waterIntake')}
+                    title="点击手动修正今日已摄入水量"
+                  >
+                    {Math.round(waterSummary.total_ml)} ml
+                    <Pencil size={11} className="goal-editable__icon" />
+                  </button>
+                )}
               </div>
               <div className="water-stat">
                 <span className="water-stat__label">目标</span>
-                <span className="water-stat__value">{waterSummary.goal_ml} ml</span>
+                {editingGoal === 'water' ? (
+                  <span className="goal-edit">
+                    <input
+                      className="goal-edit__input goal-edit__input--water"
+                      type="number"
+                      min={1}
+                      autoFocus
+                      value={goalInput}
+                      disabled={savingGoal}
+                      onChange={(e) => setGoalInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveGoal()
+                        if (e.key === 'Escape') cancelEditGoal()
+                      }}
+                    />
+                    <span className="goal-edit__unit">ml</span>
+                    <button className="goal-edit__btn goal-edit__btn--ok" onClick={saveGoal} title="保存" disabled={savingGoal}>
+                      {savingGoal ? <Loader2 size={12} className="spin" /> : <Check size={12} />}
+                    </button>
+                    <button className="goal-edit__btn" onClick={cancelEditGoal} title="取消">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    className="water-stat__value goal-editable"
+                    onClick={() => startEditGoal('water')}
+                    title="点击调整每日饮水目标"
+                  >
+                    {waterSummary.goal_ml} ml
+                    <Pencil size={11} className="goal-editable__icon" />
+                  </button>
+                )}
               </div>
               <div className="water-stat">
                 <span className="water-stat__label">还需</span>
@@ -684,13 +1000,17 @@ const loadExercisePlan = async (date?: string) => {
                 </span>
               </div>
             </div>
-            {Object.keys(waterSummary.type_breakdown || {}).length > 0 && (
+            {Object.entries(waterSummary.type_breakdown || {})
+              .filter(([type]) => type !== 'manual')
+              .length > 0 && (
               <div className="water-types">
-                {Object.entries(waterSummary.type_breakdown).map(([type, ml]) => (
-                  <span key={type} className="water-types__chip">
-                    {type} {Math.round(ml as number)}ml
-                  </span>
-                ))}
+                {Object.entries(waterSummary.type_breakdown)
+                  .filter(([type]) => type !== 'manual')
+                  .map(([type, ml]) => (
+                    <span key={type} className="water-types__chip">
+                      {type} {Math.round(ml as number)}ml
+                    </span>
+                  ))}
               </div>
             )}
             <div className="water-card__hint">
@@ -1008,31 +1328,31 @@ const loadExercisePlan = async (date?: string) => {
 <TrendingDown size={16} /> 目标进度
                 </span>
               </div>
-            <div className="goal-progress">
-              <div className="goal-progress__bar">
-                <div
-                  className="goal-progress__fill"
-                  style={{ width: `${mockGoalProgress.percentage}%` }}
-                />
-              </div>
-              <span className="goal-progress__percent">{mockGoalProgress.percentage}%</span>
-            </div>
-            <div className="goal-stats">
-              <div className="goal-stat">
-                <span className="goal-stat__label">当前</span>
-                <span className="goal-stat__value">{mockGoalProgress.currentWeight}kg</span>
-              </div>
-              <div className="goal-stat">
-                <span className="goal-stat__label">目标</span>
-                <span className="goal-stat__value">{mockGoalProgress.targetWeight}kg</span>
-              </div>
-              <div className="goal-stat">
-                <span className="goal-stat__label">本周</span>
-                <span className="goal-stat__value goal-stat__value--down">
-                  {mockGoalProgress.weeklyChange}kg
-                </span>
-              </div>
-            </div>
+<div className="goal-progress">
+<div className="goal-progress__bar">
+<div
+className="goal-progress__fill"
+style={{ width: `${goalPct}%` }}
+/>
+</div>
+<span className="goal-progress__percent">{goalPct}%</span>
+</div>
+<div className="goal-stats">
+<div className="goal-stat">
+<span className="goal-stat__label">当前</span>
+<span className="goal-stat__value">{bodyInfo.current != null ? `${bodyInfo.current}kg` : `${mockGoalProgress.currentWeight}kg`}</span>
+</div>
+<div className="goal-stat">
+<span className="goal-stat__label">目标</span>
+<span className="goal-stat__value">{bodyInfo.target != null ? `${bodyInfo.target}kg` : `${mockGoalProgress.targetWeight}kg`}</span>
+</div>
+<div className="goal-stat">
+<span className="goal-stat__label">本周</span>
+<span className="goal-stat__value goal-stat__value--down">
+{goalWeeklyChange != null ? `${goalWeeklyChange > 0 ? '+' : ''}${goalWeeklyChange}kg` : '—'}
+</span>
+</div>
+</div>
           </div>
           )}
 
@@ -1059,43 +1379,12 @@ const loadExercisePlan = async (date?: string) => {
               />
               <span className="weight-modal__unit">kg</span>
             </div>
-            <div className="weight-modal__hint">AI将根据体重变化趋势生成反馈</div>
-            <button className="btn btn-primary weight-modal__submit" onClick={handleWeightSubmit}>
-              确认记录
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {/* 生成食谱确认弹窗 */}
-      {showRecipeModal && (
-        <Modal title="生成食谱" onClose={() => setShowRecipeModal(false)}>
-          <div className="recipe-modal">
-            <p className="recipe-modal__desc">请选择生成范围，AI将根据你的身体数据定制食谱：</p>
-            <div className="recipe-modal__options">
-              <button
-                className={`recipe-modal__option ${recipeDays === '1' ? 'recipe-modal__option--active' : ''}`}
-                onClick={() => setRecipeDays('1')}
-              >
-                <CalendarDays size={20} />
-                <span>当日食谱</span>
-                <small>3餐 · 约1600千卡</small>
-              </button>
-              <button
-                className={`recipe-modal__option ${recipeDays === '7' ? 'recipe-modal__option--active' : ''}`}
-                onClick={() => setRecipeDays('7')}
-              >
-                <CalendarDays size={20} />
-                <span>本周食谱</span>
-                <small>21餐 · 7天计划</small>
-              </button>
-            </div>
-            <button
-              className="btn btn-primary recipe-modal__submit"
-              onClick={handleGenerateRecipe}
-            >
-              确认生成
-            </button>
+<div className={`weight-modal__hint ${weightInput ? 'weight-modal__hint--advice' : ''}`}>
+{weightAdvice}
+</div>
+<button className="btn btn-primary weight-modal__submit" onClick={handleWeightSubmit} disabled={savingWeight}>
+{savingWeight ? '保存中...' : '确认记录'}
+</button>
           </div>
         </Modal>
       )}
@@ -1215,6 +1504,24 @@ function MessageBubble({
       <div className="msg__body">
         {message.type === 'text' && (
           <div className={`msg__bubble ${isAI ? 'msg__bubble--ai' : 'msg__bubble--user'}`}>
+            {message.imageUrl && (
+              <img
+                src={message.imageUrl}
+                className="msg__image"
+                alt="上传的食物图片"
+                onClick={(e) => {
+                  // 点击放大预览
+                  const url = message.imageUrl
+                  if (!url) return
+                  const win = window.open('', '_blank')
+                  if (win) {
+                    win.document.write(`<img src="${url}" style="max-width:100%">`)
+                    win.document.title = '食物图片'
+                  }
+                  e.stopPropagation()
+                }}
+              />
+            )}
             <p className="msg__text">
               {message.content || (isAI ? <span className="typing-inline"><span className="typing__dot" /><span className="typing__dot" /><span className="typing__dot" /></span> : '')}
             </p>
@@ -1231,7 +1538,7 @@ function MessageBubble({
               {message.dietData.foods.map((f, i) => (
                 <span key={i} className="diet-confirm__food">
                   {f.food_name} {f.amount_g}g · {Math.round(f.calories)}kcal
-                  {' · '}P{f.protein_g}g C{f.carbs_g}g F{f.fat_g}g
+                  {' · '}蛋白{f.protein_g}g 碳水{f.carbs_g}g 脂肪{f.fat_g}g
                 </span>
               ))}
             </div>
@@ -1257,7 +1564,7 @@ function MessageBubble({
             <div className="water-confirm__summary">
               <Droplets size={14} />
               检测到饮水：{message.waterData.description || `${message.waterData.amount_ml}ml`}
-              （{message.waterData.drink_type} · {Math.round(message.waterData.amount_ml)}ml）
+              （{DRINK_TYPE_LABEL[message.waterData.drink_type] || message.waterData.drink_type} · {Math.round(message.waterData.amount_ml)}ml）
             </div>
             <div className="water-confirm__actions">
               <button

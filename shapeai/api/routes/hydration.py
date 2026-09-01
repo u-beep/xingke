@@ -17,6 +17,11 @@ class HydrationRecordRequest(BaseModel):
     notes: Optional[str] = Field(None, description="备注")
 
 
+class HydrationManualTotalRequest(BaseModel):
+    """手动设置今日饮水总量请求。"""
+    total_ml: float = Field(..., ge=0, description="目标总量(毫升)，0 表示清空今日饮水")
+
+
 @router.post("/record", summary="记录饮水")
 async def record_hydration(request: HydrationRecordRequest, req: Request):
     """记录用户饮水。"""
@@ -34,6 +39,22 @@ async def record_hydration(request: HydrationRecordRequest, req: Request):
         "record_id": record_id,
         "message": "饮水记录已保存" if record_id else "记录失败",
     }
+
+
+@router.post("/manual-total", summary="手动设置今日饮水总量")
+async def set_manual_total(request: HydrationManualTotalRequest, req: Request):
+    """手动修正今日饮水总量。
+
+    新值大于当前总量时补录差值；小于时清空今日记录后重建单条手动记录。
+    """
+    user_id = get_auth_user_id(req)
+    store = HydrationStore()
+    ok = store.set_today_total(user_id, request.total_ml)
+    if not ok:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="设置今日饮水总量失败")
+    summary = store.get_today_summary(user_id)
+    return {"success": True, "summary": summary}
 
 
 @router.get("/today", summary="获取今日饮水")

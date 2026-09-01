@@ -150,7 +150,7 @@ class OpenAICompatibleClient(ModelClient):
                     time.sleep(0.5 * (attempt + 1))
                     continue
                 raise RuntimeError(f"模型请求失败 HTTP {exc.code}: {body}") from exc
-            except (urllib.error.URLError, RemoteDisconnected) as exc:
+            except (urllib.error.URLError, RemoteDisconnected, TimeoutError) as exc:
                 if attempt < attempts - 1:
                     time.sleep(0.5 * (attempt + 1))
                     continue
@@ -229,7 +229,7 @@ class AnthropicCompatibleClient(ModelClient):
                     time.sleep(0.5 * (attempt + 1))
                     continue
                 raise RuntimeError(f"模型请求失败 HTTP {exc.code}: {body}") from exc
-            except (urllib.error.URLError, RemoteDisconnected) as exc:
+            except (urllib.error.URLError, RemoteDisconnected, TimeoutError) as exc:
                 if attempt < attempts - 1:
                     time.sleep(0.5 * (attempt + 1))
                     continue

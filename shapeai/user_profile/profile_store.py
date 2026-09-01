@@ -47,7 +47,12 @@ class UserProfile:
     # 其他偏好
     sleep_hours: Optional[float] = None        # 平均睡眠时长
     water_intake_ml: Optional[int] = None      # 每日饮水目标(ml)
-    daily_calorie_budget: Optional[int] = None  # 每日热量目标预算(kcal)，用户可自定义
+    daily_calorie_budget: Optional[int] = None  # 每日热量目标预算(kcal)，由营养素目标自动推算
+    # 三大营养素每日目标(g)：每天按体重/身高/BMI 自动生成默认值，用户可调整
+    protein_target_g: Optional[float] = None   # 蛋白质目标(g)
+    carbs_target_g: Optional[float] = None     # 碳水目标(g)
+    fat_target_g: Optional[float] = None       # 脂肪目标(g)
+    macro_targets_date: Optional[str] = None   # 当前目标生效日期 YYYY-MM-DD
     notes: Optional[str] = None                # 备注
 
     def to_dict(self) -> dict:
@@ -163,6 +168,10 @@ class ProfileStore:
                         sleep_hours     FLOAT,
                         water_intake_ml INTEGER,
                         daily_calorie_budget INTEGER,
+                        protein_target_g FLOAT,
+                        carbs_target_g  FLOAT,
+                        fat_target_g    FLOAT,
+                        macro_targets_date VARCHAR(32),
                         notes           TEXT,
                         updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
@@ -193,7 +202,9 @@ class ProfileStore:
                            disliked_foods, meal_count_per_day,
                            health_goal, target_date,
                            sleep_hours, water_intake_ml,
-                           daily_calorie_budget, notes
+                           daily_calorie_budget,
+                           protein_target_g, carbs_target_g, fat_target_g,
+                           macro_targets_date, notes
                     FROM user_profiles WHERE user_id = %s
                 """, (user_id,))
                 row = cur.fetchone()
@@ -221,8 +232,10 @@ class ProfileStore:
                         disliked_foods, meal_count_per_day,
                         health_goal, target_date,
                         sleep_hours, water_intake_ml,
-                        daily_calorie_budget, notes, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                        daily_calorie_budget,
+                        protein_target_g, carbs_target_g, fat_target_g,
+                        macro_targets_date, notes, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                     ON CONFLICT (user_id) DO UPDATE SET
                         height_cm = EXCLUDED.height_cm,
                         weight_kg = EXCLUDED.weight_kg,
@@ -241,6 +254,10 @@ class ProfileStore:
                         sleep_hours = EXCLUDED.sleep_hours,
                         water_intake_ml = EXCLUDED.water_intake_ml,
                         daily_calorie_budget = EXCLUDED.daily_calorie_budget,
+                        protein_target_g = EXCLUDED.protein_target_g,
+                        carbs_target_g = EXCLUDED.carbs_target_g,
+                        fat_target_g = EXCLUDED.fat_target_g,
+                        macro_targets_date = EXCLUDED.macro_targets_date,
                         notes = EXCLUDED.notes,
                         updated_at = now()
                 """, (
@@ -255,6 +272,8 @@ class ProfileStore:
                     profile.meal_count_per_day, profile.health_goal,
                     profile.target_date, profile.sleep_hours,
                     profile.water_intake_ml, profile.daily_calorie_budget,
+                    profile.protein_target_g, profile.carbs_target_g,
+                    profile.fat_target_g, profile.macro_targets_date,
                     profile.notes,
                 ))
             self._cache_set(profile.user_id, profile)
@@ -298,7 +317,11 @@ class ProfileStore:
             sleep_hours=row[15],
             water_intake_ml=row[16],
             daily_calorie_budget=row[17],
-            notes=row[18],
+            protein_target_g=row[18],
+            carbs_target_g=row[19],
+            fat_target_g=row[20],
+            macro_targets_date=row[21],
+            notes=row[22],
         )
 
     @staticmethod
@@ -323,5 +346,9 @@ class ProfileStore:
             sleep_hours=data.get("sleep_hours"),
             water_intake_ml=data.get("water_intake_ml"),
             daily_calorie_budget=data.get("daily_calorie_budget"),
+            protein_target_g=data.get("protein_target_g"),
+            carbs_target_g=data.get("carbs_target_g"),
+            fat_target_g=data.get("fat_target_g"),
+            macro_targets_date=data.get("macro_targets_date"),
             notes=data.get("notes"),
         )

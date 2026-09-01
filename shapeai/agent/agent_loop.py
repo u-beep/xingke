@@ -13,6 +13,7 @@ import re
 import time
 import logging
 import threading
+import uuid
 
 from ..user_profile import PreferenceUpdater
 
@@ -128,7 +129,14 @@ class AgentLoop:
             if agent.safety_guard:
                 final = agent.safety_guard.guard_output(final)
 
-            agent.record({"role": "assistant", "content": final})
+            # 为该条 AI 消息分配稳定 ID。异步提取出的待确认饮食/饮水会写回该消息，
+            # 从而在刷新后仍能恢复对应的录入卡片。
+            pending_entry_id = uuid.uuid4().hex
+            agent.record({
+                "role": "assistant",
+                "content": final,
+                "args": {"pending_entry_id": pending_entry_id},
+            })
             agent.memory.add_message("assistant", final)
 
             duration_ms = int((time.monotonic() - run_started_at) * 1000)
@@ -139,7 +147,7 @@ class AgentLoop:
             # 饮食/饮水提取不再同步等待（原先串行 2 次 LLM 往返拖慢首字返回），
             # 改为提交到后台线程池，结果通过 agent.last_extract_result 暴露，
             # 由 /chat/poll 或 /chat/extract 接口拉取。
-            self._submit_extraction(user_message, final)
+            self._submit_extraction(user_message, final, pending_entry_id)
 
             return final
 
@@ -157,11 +165,17 @@ class AgentLoop:
     #  异步提取（后台线程）
     # ─────────────────────────────────────────────────────────────
 
-    def _submit_extraction(self, user_message: str, ai_response: str) -> None:
+    def _submit_extraction(
+        self,
+        user_message: str,
+        ai_response: str,
+        pending_entry_id: str,
+    ) -> None:
         """把饮食/饮水提取提交到后台线程，不阻塞主回复返回。
 
-        优先使用 CombinedExtractor（一次 LLM 调用同时提取两类记录），
-        完成后把结果写入 agent.last_extract_result 供接口层拉取。
+        优先使用 CombinedExtractor（一次 LLM 调用同时提取两类记录）。结果除了供
+        接口层即时拉取，也会写回对应 AI 消息的 ``args.pending_entry``，确保刷新后
+        尚未确认的录入卡可被会话历史还原。
         """
         agent = self.agent
         extractor = getattr(agent, "combined_extractor", None)
@@ -189,10 +203,11 @@ class AgentLoop:
                             water_data = w
                 except Exception as exc:
                     logger.warning("饮水提取失败: %s", exc)
-                if diet_data or water_data:
-                    agent.last_extract_result = {"diet_data": diet_data, "water_data": water_data}
-                else:
-                    agent.last_extract_result = {"diet_data": None, "water_data": None}
+                self._persist_pending_entry(
+                    pending_entry_id,
+                    diet_data=diet_data,
+                    water_data=water_data,
+                )
 
             threading.Thread(target=_legacy_extract, daemon=True, name="extract_task").start()
             return
@@ -205,16 +220,62 @@ class AgentLoop:
                     user_message=user_message,
                     ai_response=ai_response,
                 )
-                agent.last_extract_result = result or {"diet_data": None, "water_data": None}
+                result = result or {}
+                diet_data = result.get("diet_data")
+                water_data = result.get("water_data")
+                self._persist_pending_entry(
+                    pending_entry_id,
+                    diet_data=diet_data,
+                    water_data=water_data,
+                )
                 logger.info("后台提取完成 耗时=%.0fms has_diet=%s has_water=%s",
                             (time.monotonic() - t0) * 1000,
-                            bool(result and result.get("diet_data")),
-                            bool(result and result.get("water_data")))
+                            bool(diet_data), bool(water_data))
             except Exception as exc:
                 logger.warning("后台提取失败: %s", exc)
-                agent.last_extract_result = {"diet_data": None, "water_data": None}
+                agent.last_extract_result = {
+                    "pending_entry_id": pending_entry_id,
+                    "diet_data": None,
+                    "water_data": None,
+                }
 
         threading.Thread(target=_run_extract, daemon=True, name="extract_task").start()
+
+    def _persist_pending_entry(
+        self,
+        pending_entry_id: str,
+        diet_data: dict | None,
+        water_data: dict | None,
+    ) -> None:
+        """将待确认提取结果写回产生它的 AI 消息并持久化会话。"""
+        agent = self.agent
+        pending_entry = {
+            "id": pending_entry_id,
+            "diet_data": diet_data,
+            "water_data": water_data,
+            "diet_status": "pending" if diet_data else "none",
+            "water_status": "pending" if water_data else "none",
+        }
+        for message in reversed(agent.session.get("history", [])):
+            if message.get("role") != "assistant":
+                continue
+            args = message.get("args") or {}
+            if args.get("pending_entry_id") != pending_entry_id:
+                continue
+            args["pending_entry"] = pending_entry
+            message["args"] = args
+            agent.session["memory"] = agent.memory.to_dict()
+            agent.session_path = agent.session_store.save(agent.session)
+            break
+        else:
+            logger.warning("未找到待确认录入对应的 AI 消息: %s", pending_entry_id)
+
+        # 保留一份瞬时结果给当前页面的轮询接口，减少等待会话重载的时延。
+        agent.last_extract_result = {
+            "pending_entry_id": pending_entry_id,
+            "diet_data": diet_data,
+            "water_data": water_data,
+        }
 
     @staticmethod
     def _parse(raw: str) -> tuple[str, str | dict]:

@@ -143,6 +143,15 @@ class AppState:
         self._agents[agent.session["id"]] = agent
         return agent
 
+    def invalidate_agent(self, session_id: str) -> None:
+        """会话被清空/删除后丢弃内存中的 agent 缓存。
+
+        否则旧 agent 实例仍持有清空前的完整 history，
+        后续任何 save() 会把旧消息全部写回存储，导致"清空后历史复活"。
+        """
+        if session_id:
+            self._agents.pop(session_id, None)
+
 
 # ─── API Key 鉴权中间件 ───
 async def verify_api_key(request: Request):

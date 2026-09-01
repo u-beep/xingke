@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useRef, useCallback, useEffect, type ReactNode } from 'react'
-import { chatApi, toolsApi, visionApi, fileToBase64, dietApi, waterApi, type WaterSummary } from '../services/api'
-import { getCurrentUserId } from '../services/authStore'
+import { chatApi, toolsApi, visionApi, fileToBase64, fileToDataUrl, dietApi, waterApi, type WaterSummary } from '../services/api'
+import { getCurrentUserId, getToken } from '../services/authStore'
 
 // —— 类型 ——
 
@@ -13,6 +13,10 @@ export interface Message {
   cardData?: any
   dietData?: { foods: any[]; total_calories: number } | null
   waterData?: { amount_ml: number; drink_type: string; description: string } | null
+  /** 后端持久化的待确认录入 ID，用于刷新恢复与状态同步。 */
+  pendingEntryId?: string
+  /** 图片消息预览（dataURL，仅前端展示，不入库） */
+  imageUrl?: string
 }
 
 interface ChatContextValue {
@@ -30,10 +34,11 @@ interface ChatContextValue {
   generateRecipe: (days: 1 | 7) => Promise<void>
   clearChat: () => Promise<void>
   loadSessionByDate: (date: string) => Promise<void>
+  refreshSummaries: () => Promise<void>
   confirmDiet: (msgId: string, foods: any[]) => Promise<void>
-  dismissDiet: (msgId: string) => void
+  dismissDiet: (msgId: string) => Promise<void>
   confirmWater: (msgId: string, amount_ml: number, drink_type?: string, notes?: string) => Promise<void>
-  dismissWater: (msgId: string) => void
+  dismissWater: (msgId: string) => Promise<void>
   /** 手动终止当前回复生成（轮询/请求/打字机动画均会中断） */
   stopGeneration: () => void
 }
@@ -46,6 +51,9 @@ interface CalorieSummary {
   record_count: number
   budget: number
   remaining: number
+  protein_target_g: number
+  carbs_target_g: number
+  fat_target_g: number
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null)
@@ -74,10 +82,45 @@ function nowTime() {
   return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+/** 将后端会话历史转换为页面消息，并还原尚未处理的饮食/饮水确认卡。 */
+function restoreMessages(history: any[], idPrefix: string): Message[] {
+const token = getToken()
+return filterGreetingMessages(history)
+.filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
+.map((msg: any, index: number) => {
+const pendingEntry = msg.args?.pending_entry
+const pendingEntryId = pendingEntry?.id || msg.args?.pending_entry_id
+// 还原识图预览：<img> 无法带请求头，用 ?token= 查询参数鉴权
+const savedImageUrl: string | undefined = msg.args?.image_url
+? (token ? `${msg.args.image_url}?token=${token}` : msg.args.image_url)
+: undefined
+return {
+id: pendingEntryId ? `${idPrefix}_${pendingEntryId}` : `${idPrefix}_${index}_${Math.random().toString(36).slice(2)}`,
+role: msg.role === 'assistant' ? 'ai' : 'user',
+type: 'text' as const,
+content: msg.content || '',
+timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+pendingEntryId,
+imageUrl: savedImageUrl,
+dietData: pendingEntry?.diet_status === 'pending' ? pendingEntry.diet_data || null : null,
+waterData: pendingEntry?.water_status === 'pending' ? pendingEntry.water_data || null : null,
+}
+})
+}
+
 let msgIdCounter = 0
 function nextId() {
-  msgIdCounter += 1
-  return `${Date.now()}_${msgIdCounter}`
+msgIdCounter += 1
+return `${Date.now()}_${msgIdCounter}`
+}
+
+/** 按当前时间推断餐次（breakfast/lunch/dinner/snack） */
+function inferMealType(): string {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 10) return 'breakfast'
+  if (hour >= 10 && hour < 14) return 'lunch'
+  if (hour >= 17 && hour < 21) return 'dinner'
+  return 'snack'
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {
@@ -97,6 +140,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     record_count: 0,
     budget: 1600,
     remaining: 1600,
+    protein_target_g: 120,
+    carbs_target_g: 200,
+    fat_target_g: 60,
   })
   const [waterSummary, setWaterSummary] = useState<WaterSummary>({
     total_ml: 0,
@@ -130,17 +176,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (result.session_id) {
           setSessionId(result.session_id)
         }
-        // 将服务端历史消息转换为前端 Message 格式
+        // 将服务端历史消息转换为前端 Message 格式，并恢复未处理的确认录入。
         if (result.history && result.history.length > 0) {
-          const restoredMessages: Message[] = filterGreetingMessages(result.history)
-            .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
-            .map((msg: any) => ({
-              id: `restored_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-              role: msg.role === 'assistant' ? 'ai' : 'user',
-              type: 'text' as const,
-              content: msg.content || '',
-              timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-            }))
+          const restoredMessages = restoreMessages(result.history, 'restored')
           if (restoredMessages.length > 0) {
             setMessages(restoredMessages)
             // 已有历史记录，标记已问候，不再发送问候
@@ -160,12 +198,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return loadTodayPromiseRef.current
   }, [])
 
-  /** 加载指定日期的热量统计 */
+  /** 加载指定日期的热量统计（预算取后端注入的用户自定义/TDEE 建议值） */
   const loadCalorieSummary = useCallback(async (date: string) => {
     try {
       const result = await dietApi.summary(USER_ID, date)
       const intake = result.total_calories || 0
-      const budget = 1600
+      const budget = Math.round(result.budget || 1600)
       setCalorieSummary({
         total_calories: intake,
         total_protein_g: result.total_protein_g || 0,
@@ -173,7 +211,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         total_fat_g: result.total_fat_g || 0,
         record_count: result.record_count || 0,
         budget,
-        remaining: Math.max(0, budget - intake),
+        remaining: Math.round(budget - intake),
+        protein_target_g: Math.round(result.protein_target_g || 120),
+        carbs_target_g: Math.round(result.carbs_target_g || 200),
+        fat_target_g: Math.round(result.fat_target_g || 60),
       })
     } catch {
       // 静默失败
@@ -196,6 +237,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // 静默失败
     }
   }, [])
+
+  /** 重新拉取当日热量与饮水统计（预算/目标修改后调用） */
+  const refreshSummaries = useCallback(async () => {
+    await Promise.all([loadCalorieSummary(currentDate), loadWaterSummary(currentDate)])
+  }, [loadCalorieSummary, loadWaterSummary, currentDate])
 
   // 组件挂载时拉取当天会话、热量统计、饮水统计
   useEffect(() => {
@@ -292,17 +338,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // 后台提取结果拉取：主回复就绪后，提取可能仍在后台跑（合并提取器异步执行）。
       // 非阻塞：与打字机动画并行轮询 /chat/extract，拿到结果后给 AI 消息附加“确认记录”卡片数据。
       const fetchExtractResult = async () => {
-        const EXTRACT_MAX_POLLS = 24  // 500ms × 24 = 最多等 12s
+        // 提取可能需要一次模型调用。规则命中通常在首轮返回；库外食物的模型识别
+        // 则允许更长等待，避免回复已展示但确认录入卡因 12 秒超时而缺失。
+        const EXTRACT_MAX_POLLS = 60  // 500ms × 60 = 最多等 30s
         for (let i = 0; i < EXTRACT_MAX_POLLS; i++) {
           try {
             await abortableSleep(500, controller.signal)
             const ext = await chatApi.extract(taskId, controller.signal)
             if (ext.status === 'ready') {
               if (ext.diet_data && ext.diet_data.foods && ext.diet_data.foods.length > 0) {
-                setMessages((prev) => prev.map((m) => (m.id === aiId && !m.dietData ? { ...m, dietData: ext.diet_data } : m)))
+                setMessages((prev) => prev.map((m) => (
+                  m.id === aiId && !m.dietData
+                    ? { ...m, dietData: ext.diet_data, pendingEntryId: ext.pending_entry_id || m.pendingEntryId }
+                    : m
+                )))
               }
               if (ext.water_data && ext.water_data.amount_ml > 0) {
-                setMessages((prev) => prev.map((m) => (m.id === aiId && !m.waterData ? { ...m, waterData: ext.water_data } : m)))
+                setMessages((prev) => prev.map((m) => (
+                  m.id === aiId && !m.waterData
+                    ? { ...m, waterData: ext.water_data, pendingEntryId: ext.pending_entry_id || m.pendingEntryId }
+                    : m
+                )))
               }
               return
             }
@@ -439,12 +495,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   /** 食物图片识别 */
   const recognizeFoodImage = useCallback(async (file: File) => {
+    // 先生成图片预览（dataURL，展示在聊天气泡中）；读取失败不影响识别流程
+    let imageUrl: string | undefined
+    try {
+      imageUrl = await fileToDataUrl(file)
+    } catch {
+      imageUrl = undefined
+    }
     const userMsg: Message = {
       id: nextId(),
       role: 'user',
       type: 'text',
       content: '（已上传食物图片，正在识别...）',
       timestamp: nowTime(),
+      imageUrl,
     }
     setMessages((prev) => [...prev, userMsg])
     setTyping(true)
@@ -464,35 +528,152 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     stopControllerRef.current = controller
     stopRequestedRef.current = false
 
+    // 识别结束后把本轮对话持久化到当天会话（否则刷新后丢失）。
+    // 携带 pending_entry 使确认卡在刷新后仍能还原并继续确认/忽略；
+    // 图片先上传到对象存储，把 key 随消息入库，刷新后图片预览可还原。
+    const persistVisionMessages = async (
+      aiContent: string,
+      dietResult?: { foods: any[]; total_calories: number },
+    ) => {
+      try {
+        // 上传预览图（失败降级：仅本次会话内可见，不入库）
+        let imageKey: string | undefined
+        if (imageUrl) {
+          try {
+            const upload = await chatApi.uploadChatImage(imageUrl)
+            imageKey = upload.image_key
+          } catch {
+            imageKey = undefined
+          }
+        }
+        const args = dietResult
+          ? {
+              pending_entry: {
+                id: `vision_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                diet_data: dietResult,
+                water_data: null,
+                diet_status: 'pending',
+                water_status: 'none',
+              },
+            }
+          : undefined
+        const result = await chatApi.appendMessages(USER_ID, sessionId, [
+          { role: 'user', content: '（已上传食物图片，正在识别...）', image_key: imageKey },
+          { role: 'assistant', content: aiContent, args },
+        ])
+        if (result?.session_id) setSessionId(result.session_id)
+      } catch {
+        // 持久化失败不影响当前界面展示
+      }
+    }
+
     try {
-      const base64 = await fileToBase64(file)
-      const result = await visionApi.recognizeFood({
-        image_base64: base64,
-        user_id: USER_ID,
-      }, controller.signal)
-      const text = typeof result === 'string'
-        ? result
-        : (result.content || result.response || JSON.stringify(result, null, 2))
+      // 识别接口需要纯 base64（无 dataURL 前缀），直接从预览 dataURL 截取，避免重复读文件
+      const base64 = imageUrl ? imageUrl.split(',')[1] : await fileToBase64(file)
+      // 失败自动重试（最多 3 次），模型偶发抽风/网络抖动不轻易放弃
+      let result: any = null
+      let lastReason = ''
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (controller.signal.aborted) break
+        try {
+          const res: any = await visionApi.recognizeFood({
+            image_base64: base64,
+            user_id: USER_ID,
+          }, controller.signal)
+          if (res?.error || !Array.isArray(res?.recognized) || res.recognized.length === 0) {
+            lastReason = res?.error || '未识别到食物'
+          } else {
+            result = res
+            break
+          }
+        } catch (err) {
+          lastReason = err instanceof Error ? err.message : '识别服务异常'
+        }
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)))
+      }
+      if (controller.signal.aborted) {
+        setMessages((prev) => {
+          const updated = [...prev]
+          const target = updated.find((m) => m.id === aiId)
+          if (target) target.content = '（已停止识别）'
+          return [...updated]
+        })
+        void persistVisionMessages('（已停止识别）')
+        return
+      }
+      const items: any[] = Array.isArray(result?.recognized) ? result.recognized : []
+      if (!result || items.length === 0) {
+        const reason = lastReason || '未识别到食物'
+        const failText = `图片识别失败：${reason}。请拍得更清晰一些，或直接用文字描述你吃的食物。`
+        setMessages((prev) => {
+          const updated = [...prev]
+          const target = updated.find((m) => m.id === aiId)
+          if (target) target.content = failText
+          return [...updated]
+        })
+        void persistVisionMessages(failText)
+        return
+      }
+      // 以整个菜品为一条记录：识别到菜品名时聚合各食材的重量与营养，
+      // 否则（未识别出菜品）退回按食材逐条记录
+      const dish = String(result?.dish || '').trim()
+      const sumOf = (pick: (item: any) => number) =>
+        Math.round(items.reduce((s: number, item: any) => s + (pick(item) || 0), 0) * 10) / 10
+      const foods = dish
+        ? [{
+            food_name: dish,
+            meal_type: items[0]?.meal_type || inferMealType(),
+            amount_g: Math.round(sumOf((item) => Number(item.quantity_g ?? item.amount_g ?? 0))),
+            calories: sumOf((item) => Number(item.calories ?? 0)),
+            protein_g: sumOf((item) => Number(item.protein ?? item.protein_g ?? 0)),
+            carbs_g: sumOf((item) => Number(item.carbs ?? item.carbs_g ?? 0)),
+            fat_g: sumOf((item) => Number(item.fat ?? item.fat_g ?? 0)),
+          }]
+        : items.map((item: any) => ({
+            food_name: item.food_name || item.name || '未知食物',
+            meal_type: item.meal_type || inferMealType(),
+            amount_g: Math.round(Number(item.quantity_g ?? item.amount_g ?? 0)),
+            calories: Math.round(Number(item.calories ?? 0) * 10) / 10,
+            protein_g: Math.round(Number(item.protein ?? item.protein_g ?? 0) * 10) / 10,
+            carbs_g: Math.round(Number(item.carbs ?? item.carbs_g ?? 0) * 10) / 10,
+            fat_g: Math.round(Number(item.fat ?? item.fat_g ?? 0) * 10) / 10,
+          }))
+      const totalCalories = Math.round(
+        Number(result?.total_calories ?? foods.reduce((s: number, f: any) => s + (f.calories || 0), 0)),
+      )
+      const breakdown = items
+        .map((item: any) => `${item.food_name || item.name || '未知食物'} ${Math.round(Number(item.quantity_g ?? item.amount_g ?? 0))}g（${Math.round(Number(item.calories ?? 0) * 10) / 10}kcal）`)
+        .join('、')
+      // 先说识别到的完整食物/菜品，再拆解食材明细
+      const text = dish
+        ? `识别到${dish}，包含 ${breakdown}，共 ${totalCalories} kcal。请确认是否计入今日热量。`
+        : `已识别食物：${breakdown}，共 ${totalCalories} kcal。请确认是否计入今日热量。`
       setMessages((prev) => {
         const updated = [...prev]
         const target = updated.find((m) => m.id === aiId)
-        if (target) target.content = text
+        if (target) {
+          target.content = text
+          target.dietData = { foods, total_calories: totalCalories }
+        }
         return [...updated]
       })
+      void persistVisionMessages(text, { foods, total_calories: totalCalories })
     } catch {
       const aborted = controller.signal.aborted
+      const errorText = aborted ? '（已停止识别）' : '抱歉，图片识别服务暂时不可用，请稍后再试或使用文字描述食物。'
       setMessages((prev) => {
         const updated = [...prev]
         const target = updated.find((m) => m.id === aiId)
-        if (target) target.content = aborted ? '（已停止识别）' : '抱歉，图片识别服务暂时不可用，请稍后再试或使用文字描述食物。'
+        if (target) target.content = errorText
         return [...updated]
       })
+      void persistVisionMessages(errorText)
     } finally {
       stopControllerRef.current = null
       setTyping(false)
       setLoading(false)
     }
-  }, [])
+  }, [sessionId])
 
   /** 生成食谱 */
   const generateRecipe = useCallback(async (days: 1 | 7) => {
@@ -552,24 +733,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  /** 清空对话 */
-  const clearChat = useCallback(async () => {
-    if (sessionId) {
-      try {
-        await chatApi.clearSession(sessionId)
-      } catch {
-        // 静默失败
-      }
-    }
-    setSessionId(null)
-    setMessages([])
-    greetedRef.current = false
-    loadedTodayRef.current = false
-    loadTodayPromiseRef.current = null
-    // 重新拉取当天会话（已清空历史，会创建新会话）
-    await loadTodaySession()
-    // 不自动发问候，保持空对话
-  }, [sessionId, sendGreeting, loadTodaySession])
+/** 清空对话（当天可能存在多个会话，需全部清空，否则 /today 合并后旧消息又会出现） */
+const clearChat = useCallback(async () => {
+// 正在生成时先中止，避免清空后结果又写回会话
+stopGeneration()
+try {
+await chatApi.clearSessionsByDate(USER_ID, currentDate)
+} catch {
+// 静默失败
+}
+setSessionId(null)
+setMessages([])
+greetedRef.current = false
+loadedTodayRef.current = false
+loadTodayPromiseRef.current = null
+// 重新拉取当天会话（已清空历史，返回空会话）
+await loadTodaySession()
+// 不自动发问候，保持空对话
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [currentDate, loadTodaySession])
 
   /** 按日期加载会话历史 */
   const loadSessionByDate = useCallback(async (date: string) => {
@@ -592,15 +774,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           setSessionId(result.session_id)
         }
         if (result.history && result.history.length > 0) {
-          const restoredMessages: Message[] = filterGreetingMessages(result.history)
-            .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
-            .map((msg: any) => ({
-              id: `restored_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-              role: msg.role === 'assistant' ? 'ai' : 'user',
-              type: 'text' as const,
-              content: msg.content || '',
-              timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-            }))
+          const restoredMessages = restoreMessages(result.history, 'today')
           setMessages(restoredMessages)
           greetedRef.current = true
           return
@@ -624,15 +798,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     try {
       const result = await chatApi.listSessionsByDate(USER_ID, date)
       if (result.history && result.history.length > 0) {
-        const restoredMessages: Message[] = filterGreetingMessages(result.history)
-          .filter((msg: any) => msg.role === 'user' || msg.role === 'assistant')
-          .map((msg: any) => ({
-            id: `hist_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-            role: msg.role === 'assistant' ? 'ai' : 'user',
-            type: 'text' as const,
-            content: msg.content || '',
-            timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-          }))
+        const restoredMessages = restoreMessages(result.history, 'history')
         setMessages(restoredMessages)
         setSessionId(result.session_id || null)
       } else {
@@ -659,47 +825,69 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, [loadTodaySession, sendGreeting])
 
-  /** 确认计入热量统计 */
+  /** 将确认/忽略状态写回会话，避免刷新后已处理的卡片再次出现。 */
+  const resolvePendingEntry = useCallback(async (
+    msgId: string,
+    entryType: 'diet' | 'water',
+    status: 'confirmed' | 'dismissed',
+  ) => {
+    const message = messages.find((item) => item.id === msgId)
+    if (!sessionId || !message?.pendingEntryId) return
+    await chatApi.resolvePendingEntry({
+      session_id: sessionId,
+      pending_entry_id: message.pendingEntryId,
+      entry_type: entryType,
+      status,
+    })
+  }, [messages, sessionId])
+
+  /** 确认计入热量统计。 */
   const confirmDiet = useCallback(async (msgId: string, foods: any[]) => {
     try {
       await dietApi.confirm(USER_ID, foods)
-      // 刷新热量统计
-      const d = new Date()
-      loadCalorieSummary(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
-      // 清除该消息的 dietData（已确认）— 不可变更新，避免 mutation 触发渲染异常
+      await resolvePendingEntry(msgId, 'diet', 'confirmed')
+      await loadCalorieSummary(currentDate)
       setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, dietData: null } : m)))
     } catch (err) {
-      // 保存失败时提示用户，避免静默丢失
       console.error('[confirmDiet] 保存饮食记录失败:', err)
       alert('保存到今日热量失败，请稍后重试')
     }
-  }, [loadCalorieSummary])
+  }, [currentDate, loadCalorieSummary, resolvePendingEntry])
 
-  /** 忽略饮食确认 */
-  const dismissDiet = useCallback((msgId: string) => {
-    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, dietData: null } : m)))
-  }, [])
+  /** 忽略饮食确认。 */
+  const dismissDiet = useCallback(async (msgId: string) => {
+    try {
+      await resolvePendingEntry(msgId, 'diet', 'dismissed')
+      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, dietData: null } : m)))
+    } catch (err) {
+      console.error('[dismissDiet] 更新待确认状态失败:', err)
+      alert('操作未保存，请稍后重试')
+    }
+  }, [resolvePendingEntry])
 
-  /** 确认计入今日饮水总量（用户在前端确认 AI 提取的饮水量） */
+  /** 确认计入今日饮水总量。 */
   const confirmWater = useCallback(async (msgId: string, amount_ml: number, drink_type: string = 'water', notes?: string) => {
     try {
       await waterApi.confirm(USER_ID, amount_ml, drink_type, notes)
-      // 刷新今日饮水统计（驱动水杯水位上涨动画）
-      const d = new Date()
-      loadWaterSummary(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
-      // 清除该消息的 waterData（已确认）— 不可变更新，避免 mutation 触发渲染异常
+      await resolvePendingEntry(msgId, 'water', 'confirmed')
+      await loadWaterSummary(currentDate)
       setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, waterData: null } : m)))
     } catch (err) {
-      // 保存失败时提示用户，避免静默丢失
       console.error('[confirmWater] 保存饮水记录失败:', err)
       alert('保存到今日饮水失败，请稍后重试')
     }
-  }, [loadWaterSummary])
+  }, [currentDate, loadWaterSummary, resolvePendingEntry])
 
-  /** 忽略饮水确认 */
-  const dismissWater = useCallback((msgId: string) => {
-    setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, waterData: null } : m)))
-  }, [])
+  /** 忽略饮水确认。 */
+  const dismissWater = useCallback(async (msgId: string) => {
+    try {
+      await resolvePendingEntry(msgId, 'water', 'dismissed')
+      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, waterData: null } : m)))
+    } catch (err) {
+      console.error('[dismissWater] 更新待确认状态失败:', err)
+      alert('操作未保存，请稍后重试')
+    }
+  }, [resolvePendingEntry])
 
   return (
     <ChatContext.Provider value={{
@@ -710,6 +898,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       currentDate,
       calorieSummary,
       waterSummary,
+      refreshSummaries,
       sendChatMessage,
       recognizeFoodImage,
       generateRecipe,

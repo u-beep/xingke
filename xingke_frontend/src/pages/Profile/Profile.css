@@ -10,15 +10,15 @@ overflow: hidden;
 /* ============ 顶部指标卡片矩阵 ============ */
 .profile__metrics-grid {
 display: grid;
-grid-template-columns: repeat(4, 1fr);
-gap: 12px;
+grid-template-columns: repeat(3, 1fr);
+gap: 14px;
 }
 
 .metric-card {
 display: flex;
 align-items: flex-start;
-gap: 12px;
-padding: 12px 16px;
+gap: 14px;
+padding: 16px 20px;
 transition: transform var(--transition), box-shadow var(--transition);
 }
 
@@ -28,8 +28,8 @@ transition: transform var(--transition), box-shadow var(--transition);
 }
 
 .metric-card__icon {
-width: 36px;
-height: 36px;
+width: 40px;
+height: 40px;
   border-radius: var(--radius-md);
   background: var(--mint-50);
   color: var(--mint-500);
@@ -132,14 +132,8 @@ height: 36px;
 }
 
 .metric-card__change-label {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.metric-card__extra {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-left: auto;
+font-size: 12px;
+color: var(--text-tertiary);
 }
 
 /* ============ 中下分栏 ============ */
@@ -177,9 +171,17 @@ flex-direction: column;
 }
 
 .profile-chart__dims {
-  display: flex;
-  gap: 8px;
+display: flex;
+gap: 8px;
+align-items: center;
 }
+
+.profile-chart__title {
+font-size: 14px;
+font-weight: 600;
+color: var(--text-primary);
+}
+
 
 .profile-chart__dim {
   padding: 5px 14px;
@@ -226,6 +228,158 @@ flex-direction: column;
 .profile-chart__body {
 flex: 1;
 min-height: 0;
+}
+
+/* 「月」视图筛选器：年月 + 周 */
+.profile-chart__filters {
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 12px;
+margin-bottom: 8px;
+flex-wrap: wrap;
+}
+
+.profile-chart__nav {
+display: flex;
+align-items: center;
+gap: 4px;
+background: var(--bg-page);
+border-radius: var(--radius-md);
+padding: 2px;
+}
+
+.profile-chart__nav-btn {
+display: inline-flex;
+align-items: center;
+justify-content: center;
+width: 24px;
+height: 24px;
+border-radius: var(--radius-sm);
+color: var(--text-secondary);
+transition: all var(--transition);
+}
+
+.profile-chart__nav-btn:hover:not(:disabled) {
+background: var(--bg-card);
+color: var(--mint-600);
+}
+
+.profile-chart__nav-btn:disabled {
+opacity: 0.35;
+cursor: not-allowed;
+}
+
+.profile-chart__nav-label {
+font-size: 13px;
+font-weight: 600;
+color: var(--text-primary);
+padding: 0 8px;
+min-width: 84px;
+text-align: center;
+}
+
+.profile-chart__week-label {
+font-size: 12px;
+font-weight: 500;
+color: var(--text-secondary);
+padding: 3px 10px;
+border-radius: var(--radius-sm);
+white-space: nowrap;
+}
+
+.profile-chart__week-label--current {
+color: var(--mint-600);
+background: var(--bg-card);
+box-shadow: var(--shadow-sm);
+font-weight: 600;
+}
+
+/* 下拉快速筛选（年月 / 周） */
+.profile-chart__select {
+position: relative;
+display: inline-flex;
+}
+
+.profile-chart__nav-label--clickable {
+display: inline-flex;
+align-items: center;
+gap: 4px;
+border: none;
+background: transparent;
+cursor: pointer;
+transition: color var(--transition);
+}
+
+.profile-chart__nav-label--clickable:hover {
+color: var(--mint-600);
+}
+
+.profile-chart__select-caret {
+opacity: 0.5;
+transition: transform var(--transition);
+}
+
+.profile-chart__select-caret--open {
+transform: rotate(180deg);
+}
+
+.profile-chart__menu-overlay {
+position: fixed;
+inset: 0;
+z-index: 29;
+}
+
+.profile-chart__menu {
+position: absolute;
+top: calc(100% + 6px);
+min-width: 180px;
+max-height: 280px;
+overflow-y: auto;
+background: var(--bg-card);
+border-radius: var(--radius-md);
+box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.12));
+padding: 4px;
+z-index: 30;
+display: flex;
+flex-direction: column;
+gap: 2px;
+}
+
+.profile-chart__menu--left {
+left: 0;
+}
+
+.profile-chart__menu--right {
+right: 0;
+}
+
+.profile-chart__menu-item {
+display: block;
+width: 100%;
+text-align: left;
+padding: 7px 10px;
+border-radius: var(--radius-sm);
+font-size: 12px;
+color: var(--text-secondary);
+white-space: nowrap;
+transition: all var(--transition);
+}
+
+.profile-chart__menu-item:hover:not(:disabled) {
+background: var(--bg-page);
+color: var(--mint-600);
+}
+
+.profile-chart__menu-item--active {
+color: var(--mint-600);
+background: rgba(53, 152, 130, 0.08);
+font-weight: 600;
+}
+
+.profile-chart__menu-item--disabled {
+opacity: 0.35;
+cursor: not-allowed;
 }
 
 .profile-chart__empty {

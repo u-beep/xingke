@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Flame, Loader2, X, Pencil, RefreshCw, ChevronLeft, ChevronRight, ShoppingCart, MessageSquare, Refrigerator } from 'lucide-react'
+import { Flame, Loader2, RefreshCw, ChevronLeft, ChevronRight, ShoppingCart, MessageSquare, Refrigerator } from 'lucide-react'
 import { dietApi, profileApi, type DailyDietRecord } from '../../services/api'
 import { getCurrentUserId } from '../../services/authStore'
 import DatePicker from '../../components/DatePicker/DatePicker'
@@ -73,13 +73,8 @@ export default function DietRecord() {
   const [summary, setSummary] = useState<any>(null)
   const [loading, setLoading] = useState(false)
 
-  // 用户热量预算
-  const [budgetInfo, setBudgetInfo] = useState<any>(null)
-
-  // 预算编辑弹窗
-  const [showBudgetModal, setShowBudgetModal] = useState(false)
-  const [budgetInput, setBudgetInput] = useState('')
-  const [savingBudget, setSavingBudget] = useState(false)
+// 用户热量预算（由三大营养素目标自动推算，不可手动修改）
+const [budgetInfo, setBudgetInfo] = useState<any>(null)
 
   useEffect(() => {
     fetchDaily(date)
@@ -101,43 +96,22 @@ export default function DietRecord() {
     }
   }
 
-  /** 获取用户热量预算 */
-  const fetchBudget = async () => {
-    try {
-      const info = await profileApi.getCalorieBudget(USER_ID)
-      setBudgetInfo(info)
-    } catch (err) {
-      console.error('获取热量预算失败:', err)
-    }
-  }
-
-  /** 保存热量预算 */
-  const handleSaveBudget = async () => {
-    const val = parseInt(budgetInput, 10)
-    if (isNaN(val) || val < 800 || val > 5000) {
-      alert('请输入 800-5000 之间的合理热量值')
-      return
-    }
-    setSavingBudget(true)
-    try {
-      await profileApi.setCalorieBudget(USER_ID, val)
-      await fetchBudget()
-      await fetchDaily(date)
-      setShowBudgetModal(false)
-    } catch (err) {
-      alert('保存预算失败，请稍后再试')
-    } finally {
-      setSavingBudget(false)
-    }
-  }
+/** 获取用户热量预算 */
+const fetchBudget = async () => {
+try {
+const info = await profileApi.getCalorieBudget(USER_ID)
+setBudgetInfo(info)
+} catch (err) {
+console.error('获取热量预算失败:', err)
+}
+}
 
   // 摄入与预算
   const consumed = summary?.total_calories || 0
   const budget = budgetInfo?.daily_calorie_budget || budgetInfo?.suggested_budget || summary?.budget || 1600
-  const remaining = Math.max(0, Math.round(budget - consumed))
-  const percent = budget > 0 ? Math.min(100, Math.round((consumed / budget) * 100)) : 0
-  const hasCustomBudget = budgetInfo?.has_custom === true
-  const isToday = date === todayStr()
+  const remaining = Math.round(budget - consumed)
+const percent = budget > 0 ? Math.round((consumed / budget) * 100) : 0
+const isToday = date === todayStr()
 
   const records = daily || []
 
@@ -152,7 +126,7 @@ export default function DietRecord() {
               <circle
                 cx="50" cy="50" r="42" fill="none" stroke="var(--mt-400)" strokeWidth="8"
                 strokeLinecap="round"
-                strokeDasharray={`${(percent / 100) * 264} 264`}
+                strokeDasharray={`${Math.min(100, percent) * 2.64} 264`}
                 transform="rotate(-90 50 50)"
               />
             </svg>
@@ -167,21 +141,17 @@ export default function DietRecord() {
             <span className="diet-stat-item__label">已摄入</span>
             <span className="diet-stat-item__value">{Math.round(consumed)}</span>
           </div>
+<div className="diet-stat-item">
+<span className="diet-stat-item__label">
+热量预算
+</span>
+<span className="diet-stat-item__value" title="由三大营养素目标自动计算，在 AI 对话页调整目标即可更新">
+{budget}
+</span>
+</div>
           <div className="diet-stat-item">
-            <span className="diet-stat-item__label">
-              热量预算
-              <button className="budget-edit-btn" onClick={() => { setBudgetInput(String(budget)); setShowBudgetModal(true) }} title="自定义热量预算">
-                <Pencil size={12} />
-              </button>
-            </span>
-            <span className="diet-stat-item__value">
-              {budget}
-              {!hasCustomBudget && budgetInfo?.suggested_budget ? <em className="budget-source-tag">TDEE建议</em> : null}
-            </span>
-          </div>
-          <div className="diet-stat-item">
-            <span className="diet-stat-item__label">剩余可吃</span>
-            <span className="diet-stat-item__value diet-stat-item__value--accent">{remaining}</span>
+            <span className="diet-stat-item__label">{remaining >= 0 ? '剩余可吃' : '超出'}</span>
+            <span className="diet-stat-item__value diet-stat-item__value--accent">{Math.abs(remaining)}</span>
           </div>
           <div className="diet-stat-item">
             <span className="diet-stat-item__label">三大营养素</span>
@@ -276,55 +246,6 @@ export default function DietRecord() {
           </div>
         )}
       </div>
-
-      {/* 热量预算编辑弹窗 */}
-      {showBudgetModal && (
-        <div className="modal-overlay" onClick={() => setShowBudgetModal(false)}>
-          <div className="modal modal--small" onClick={(e) => e.stopPropagation()}>
-            <div className="modal__header">
-              <h3 className="modal__title">自定义每日热量预算</h3>
-              <button className="modal__close" onClick={() => setShowBudgetModal(false)}>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="modal__body">
-              <div className="budget-modal">
-                <p className="budget-modal__hint">
-                  设置每日热量目标预算（kcal）。推荐范围：减脂期 1200-1600，维持期 1600-2000，增肌期 2000-2800。
-                </p>
-                {budgetInfo?.suggested_budget ? (
-                  <p className="budget-modal__suggested">
-                    根据你的身体数据，TDEE 建议值：<strong>{budgetInfo.suggested_budget} kcal</strong>
-                  </p>
-                ) : null}
-                <div className="budget-modal__quick">
-                  {[1400, 1600, 1800, 2000].map((v) => (
-                    <button key={v} className="budget-modal__quick-btn" onClick={() => setBudgetInput(String(v))}>
-                      {v}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  className="budget-modal__input"
-                  type="number"
-                  min={800}
-                  max={5000}
-                  value={budgetInput}
-                  onChange={(e) => setBudgetInput(e.target.value)}
-                  placeholder="输入热量目标"
-                />
-                <button
-                  className="btn btn-primary budget-modal__submit"
-                  disabled={savingBudget || !budgetInput}
-                  onClick={handleSaveBudget}
-                >
-                  {savingBudget ? <Loader2 size={16} className="spin" /> : null} 保存预算
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

@@ -123,18 +123,23 @@ class HydrationExtractor:
             "小杯": 150.0,
         }
 
-        # 饮料类型识别
+        # 饮料类型识别。用户若明确写了“水/喝水/xxxml 水”，优先按水记录；
+        # 避免同一句还提到牛奶、咖啡等食物时覆盖本次实际喝水的类型。
         drink_type = "water"
-        if any(kw in user_message for kw in ["茶", "绿茶", "红茶", "乌龙", "花茶"]):
-            drink_type = "tea"
-        elif "咖啡" in user_message:
-            drink_type = "coffee"
-        elif any(kw in user_message for kw in ["果汁", "橙汁", "苹果汁"]):
-            drink_type = "juice"
-        elif "牛奶" in user_message or "酸奶" in user_message:
-            drink_type = "milk"
-        elif "汤" in user_message:
-            drink_type = "soup"
+        explicit_water = any(kw in user_message for kw in [
+            "白开水", "纯净水", "矿泉水", "喝水", "饮水",
+        ]) or bool(re.search(r"\d+(?:\.\d+)?\s*(?:ml|mL|ML|毫升|cc)\s*(?:的)?水", user_message))
+        if not explicit_water:
+            if any(kw in user_message for kw in ["茶", "绿茶", "红茶", "乌龙", "花茶"]):
+                drink_type = "tea"
+            elif "咖啡" in user_message:
+                drink_type = "coffee"
+            elif any(kw in user_message for kw in ["果汁", "橙汁", "苹果汁"]):
+                drink_type = "juice"
+            elif "牛奶" in user_message or "酸奶" in user_message:
+                drink_type = "milk"
+            elif "汤" in user_message:
+                drink_type = "soup"
 
         # 优先匹配用户消息中明确给出的毫升数（如"喝了300ml水"、"500毫升"）
         ml_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:ml|mL|ML|毫升|cc)', user_message)

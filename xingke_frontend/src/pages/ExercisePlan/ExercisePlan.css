@@ -45,11 +45,7 @@
   color: var(--text-tertiary);
 }
 
-/* ─── 本周趋势图 ─── */
-.exercise-plan__trend {
-  padding: 20px 24px;
-}
-
+/* ─── 统计图表（通用柱状图样式） ─── */
 .exercise-trend__header {
   display: flex;
   align-items: center;
@@ -75,6 +71,7 @@
 }
 
 .exercise-trend__bar-wrap {
+  position: relative;
   width: 100%;
   max-width: 48px;
   height: 90px;
@@ -84,17 +81,64 @@
 }
 
 .exercise-trend__bar {
-  width: 60%;
-  min-height: 3px;
-  border-radius: 6px 6px 2px 2px;
+  width: 56%;
+  border-radius: 8px 8px 3px 3px;
   background: linear-gradient(180deg, var(--mint-400), var(--mint-500));
-  transition: height 0.4s ease;
+  opacity: 0.85;
+  transition: height 0.4s ease, opacity 0.15s ease, transform 0.15s ease;
+}
+
+/* 零值：不渲染假柱子，只留一个底部浅色基线点 */
+.exercise-trend__bar--zero {
+  width: 36%;
+  height: 4px !important;
+  border-radius: 2px;
+  background: var(--border-light, #eee3d2);
+  opacity: 1;
+}
+
+/* 今天：强调色 */
+.exercise-trend__bar--today {
+  opacity: 1;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04) inset;
+}
+
+/* 悬停高亮：整柱提亮并轻微放大 */
+.exercise-trend__col--active .exercise-trend__bar {
+  opacity: 1;
+  transform: scaleY(1.03);
+  transform-origin: bottom;
+  filter: brightness(1.08);
+}
+
+/* 峰值柱顶部的数值标签（柱高最高只到 80%，预留标签空间） */
+.exercise-trend__peak {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--mint-600);
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .exercise-trend__label {
   position: relative;
   font-size: 11px;
   color: var(--text-tertiary);
+  transition: color 0.15s ease;
+}
+
+.exercise-trend__col--active .exercise-trend__label {
+  color: var(--mint-600);
+  font-weight: 600;
+}
+
+.exercise-trend__label--today {
+  color: var(--mint-600);
+  font-weight: 600;
 }
 
 .exercise-trend__dot {
@@ -102,18 +146,12 @@
   top: -6px;
   left: 50%;
   transform: translateX(-50%);
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--mint-500);
+width: 4px;
+height: 4px;
+border-radius: 50%;
+background: var(--mint-500);
 }
 
-.exercise-trend__value {
-  font-size: 10px;
-  color: var(--mint-600);
-  font-weight: 600;
-  min-height: 14px;
-}
 
 /* ─── 两栏：记录表单 + 今日记录 ─── */
 .exercise-plan__grid {
@@ -425,12 +463,26 @@
   margin-bottom: 0;
 }
 
-.exercise-stats__title em {
-  margin-left: 6px;
+.exercise-stats__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: -6px 0 14px;
+}
+
+.exercise-stats__meta em {
   font-style: normal;
   font-size: 12px;
-  font-weight: 400;
   color: var(--text-tertiary);
+}
+
+.exercise-stats__detail {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mint-600);
+  transition: opacity 0.15s ease;
 }
 
 .exercise-stats__filters {

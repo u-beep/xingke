@@ -23,8 +23,9 @@ import {
   Pencil,
   User,
   Activity,
+  ChevronDown,
 } from 'lucide-react'
-import { toolsApi, weightApi, profileApi, dashboardApi } from '../../services/api'
+import { weightApi, profileApi, dashboardApi } from '../../services/api'
 import { getAuthUser } from '../../services/authStore'
 import './Profile.css'
 
@@ -32,21 +33,17 @@ import './Profile.css'
 // 类型与常量
 // ============================================
 
-type Dimension = 'weight' | 'bodyFat' | 'waist' | 'hip'
-type TimeRange = 'week' | 'month' | 'year'
+type Dimension = 'weight'
 
 const dimensionConfig: Record<Dimension, { label: string; color: string; unit: string }> = {
-  weight: { label: '体重', color: '#ffc300', unit: 'kg' },
-  bodyFat: { label: '体脂率', color: '#f59e0b', unit: '%' },
-  waist: { label: '腰围', color: '#3b82f6', unit: 'cm' },
-  hip: { label: '臀围', color: '#ec4899', unit: 'cm' },
+weight: { label: '体重', color: '#ffc300', unit: 'kg' },
 }
-
-const rangeDays: Record<TimeRange, number> = { week: 7, month: 30, year: 365 }
 
 /** 身体数据点（趋势图统一格式） */
 interface BodyDataPoint {
   date: string
+  /** 完整日期 YYYY-MM-DD，用于月视图按周筛选定位 */
+  iso?: string
   weight: number | null
   bodyFat: number | null
   waist: number | null
@@ -81,19 +78,18 @@ export default function Profile() {
   })
   // —— 体重历史（趋势图数据源）——
   const [history, setHistory] = useState<BodyDataPoint[]>([])
-  // —— 计算指标 ——
-  const [bmrData, setBmrData] = useState<any>(null)
-  const [tdeeData, setTdeeData] = useState<any>(null)
   // —— 本周摘要（后端 /dashboard/weekly-summary）——
   const [weekly, setWeekly] = useState<any>(null)
-  // —— AI 解读 ——
-  const [aiAnalysis, setAiAnalysis] = useState<string>('')
-  const [analyzing, setAnalyzing] = useState(false)
   const [loading, setLoading] = useState(true)
-
   // —— 图表状态 ——
-  const [selectedDim, setSelectedDim] = useState<Dimension>('weight')
-  const [timeRange, setTimeRange] = useState<TimeRange>('month')
+  const [selectedDim] = useState<Dimension>('weight')
+  // 图表固定为「按周展示」模式：左上年月只负责筛选显示范围，以周为单位选择（默认当前周）
+  const [monthCursor, setMonthCursor] = useState<string>(() => toIsoDate(new Date()).slice(0, 7))
+  const [weekIndex, setWeekIndex] = useState(0)
+  // 下拉筛选器开关（年份 / 月份 / 周）
+  const [yearMenuOpen, setYearMenuOpen] = useState(false)
+  const [monthMenuOpen, setMonthMenuOpen] = useState(false)
+  const [weekMenuOpen, setWeekMenuOpen] = useState(false)
 
   // 页面加载：并行拉取资料、最新身体数据、周摘要
   useEffect(() => {
@@ -127,12 +123,11 @@ export default function Profile() {
     })()
   }, [])
 
-  // 身体数据就绪后：拉趋势 + 算 BMR/TDEE
+  // 身体数据就绪后：拉取趋势
   const metricsReady = bodyMetrics.weight !== null
   useEffect(() => {
     if (!metricsReady) return
     fetchHistory()
-    fetchMetrics()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metricsReady])
 
@@ -143,6 +138,7 @@ export default function Profile() {
       const records: any[] = (res?.records || []).slice().reverse() // 接口倒序 → 时间升序
       const points: BodyDataPoint[] = records.map((r) => ({
         date: formatDate(r.recorded_at),
+        iso: toIsoDate(new Date(r.recorded_at)),
         weight: r.weight_kg != null ? Number(r.weight_kg) : null,
         bodyFat: r.body_fat_pct != null ? Number(r.body_fat_pct) : null,
         waist: r.waist_cm != null ? Number(r.waist_cm) : null,
@@ -154,35 +150,7 @@ export default function Profile() {
     }
   }
 
-  /** 计算 BMR/TDEE（依赖资料中的身高/年龄/性别 + 当前体重） */
-  const fetchMetrics = async (weight?: number) => {
-    const w = weight ?? bodyMetrics.weight ?? undefined
-    const height = profile?.height_cm ?? undefined
-    if (!w || !height) return
-    try {
-      const bmr = await toolsApi.calculateBMR({
-        gender: profile?.gender || 'male',
-        age: profile?.age ?? undefined,
-        weight: w,
-        height,
-      }).catch(() => null)
-      if (bmr) {
-        setBmrData(bmr)
-        const bmrVal = typeof bmr === 'object' ? bmr.bmr ?? bmr.value : null
-        if (bmrVal) {
-          const tdee = await toolsApi.calculateTDEE({
-            bmr: Number(bmrVal),
-            activity_level: 'moderate',
-          }).catch(() => null)
-          if (tdee) setTdeeData(tdee)
-        }
-      }
-    } catch {
-      // 计算失败保持占位
-    }
-  }
-
-  /** 编辑体重/体脂后入库并刷新派生指标 */
+  /** 编辑体重/体脂后入库并刷新趋势 */
   const persistBodyRecord = async (patch: { weight?: number; bodyFat?: number }) => {
     const next = {
       weight: patch.weight ?? bodyMetrics.weight ?? null,
@@ -197,12 +165,10 @@ export default function Profile() {
     })
     if (!result?.success) throw new Error(result?.message || '保存失败，请稍后重试')
     setBodyMetrics(next)
-    fetchMetrics(next.weight)
     fetchHistory()
   }
 
   const handleSaveWeight = (v: number) => persistBodyRecord({ weight: v })
-  const handleSaveBodyFat = (v: number) => persistBodyRecord({ bodyFat: v })
   /** BMI 是派生值：按身高反推体重后入库 */
   const heightCm = Number(profile?.height_cm) || 0
   const handleSaveBmi = (v: number) => {
@@ -210,43 +176,10 @@ export default function Profile() {
     return persistBodyRecord({ weight: +(v * (heightCm / 100) ** 2).toFixed(1) })
   }
 
-  /** AI 解读：喂真实体重/体脂历史 */
-  const handleAnalyzeBody = async () => {
-    setAnalyzing(true)
-    try {
-      const recent = history.slice(-14)
-      const weightRecords = recent
-        .filter((d) => d.weight != null)
-        .map((d) => ({ date: d.date, weight: d.weight }))
-      const bodyFatRecords = recent
-        .filter((d) => d.bodyFat != null)
-        .map((d) => ({ date: d.date, bodyFat: d.bodyFat }))
-
-      const result = await toolsApi.analyzeBody(
-        { weight_records: weightRecords, body_fat_records: bodyFatRecords },
-        {
-          goal: GOAL_LABEL[profile?.health_goal] || '减脂',
-          target_weight: Number(profile?.target_weight_kg) || 0,
-        },
-      )
-      const text =
-        typeof result === 'string'
-          ? result
-          : result?.content || result?.response || result?.analysis || JSON.stringify(result, null, 2)
-      setAiAnalysis(text)
-    } catch {
-      setAiAnalysis('分析服务暂时不可用，请稍后再试。')
-    } finally {
-      setAnalyzing(false)
-    }
-  }
-
   // —— 派生指标 ——
   const heightM = heightCm / 100
   const bmiValue = bodyMetrics.weight && heightM ? (bodyMetrics.weight / (heightM * heightM)).toFixed(1) : '—'
   const bmiLabel = bmiValue === '—' ? '' : bmiCategory(Number(bmiValue))
-  const bmrValue = bmrData ? (bmrData.bmr ?? bmrData.value ?? '—') : '—'
-  const tdeeValue = tdeeData ? (tdeeData.tdee ?? tdeeData.value ?? '—') : '—'
 
   // —— 目标进度（真实计算）——
   const targetWeight = Number(profile?.target_weight_kg) || null
@@ -257,8 +190,75 @@ export default function Profile() {
         ? 0
         : null
 
-  // —— 趋势图数据（按时间范围裁剪）——
-  const chartData = sliceByRange(history, timeRange)
+  // —— 趋势图数据 ——
+  // 年月筛选 + 以周为单位选择（默认当前周，可回看历史周），横轴为该周 7 天日期。
+  // 体重规则：当天有记录用记录；未修改则当天零点起沿用前一天的值；还没到的天不显示点。
+  const monthWeeksList = monthWeeks(Number(monthCursor.slice(0, 4)), Number(monthCursor.slice(5, 7)))
+  const todayIso = toIsoDate(new Date())
+  const safeWeekIndex = Math.max(0, Math.min(weekIndex, monthWeeksList.length - 1))
+  const activeWeek = monthWeeksList[safeWeekIndex]
+  const fmtMD = (d: Date) => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+  const isCurrentWeek = activeWeek
+    ? toIsoDate(activeWeek.start) <= todayIso && todayIso <= toIsoDate(activeWeek.end)
+    : false
+
+  // 近三年年份列表（供年份下拉）
+  const nowYear = new Date().getFullYear()
+  const yearOptions = [nowYear, nowYear - 1, nowYear - 2]
+  const selectedYear = Number(monthCursor.slice(0, 4))
+  const selectedMonth = Number(monthCursor.slice(5, 7))
+
+  const gotoMonth = (ym: string) => {
+    setMonthCursor(ym)
+    setWeekIndex(defaultWeekIndex(monthWeeks(Number(ym.slice(0, 4)), Number(ym.slice(5, 7))), todayIso))
+    setYearMenuOpen(false)
+    setMonthMenuOpen(false)
+  }
+
+  /** 选择年份：若落到未来月份则钳到今年当月 */
+  const selectYear = (year: number) => {
+    let month = selectedMonth
+    if (`${year}-${String(month).padStart(2, '0')}` > todayIso.slice(0, 7)) {
+      month = Number(todayIso.slice(5, 7))
+    }
+    gotoMonth(`${year}-${String(month).padStart(2, '0')}`)
+  }
+
+  const gotoWeek = (idx: number) => {
+    const wk = monthWeeksList[idx]
+    if (!wk || toIsoDate(wk.end) > todayIso) return // 未来周不可选
+    setWeekIndex(idx)
+    setWeekMenuOpen(false)
+  }
+
+  const chartData: BodyDataPoint[] = []
+  if (activeWeek) {
+    const byIso = new Map(history.map((p) => [p.iso, p]))
+    const weekStartIso = toIsoDate(activeWeek.start)
+    // 周开始前最近的一条体重记录，作为周初的沿用基准
+    let lastWeight: number | null = null
+    for (const p of history) {
+      if (p.iso && p.iso < weekStartIso && p.weight != null) lastWeight = p.weight
+    }
+    const cur = new Date(activeWeek.start)
+    for (let i = 0; i < 7; i++) {
+      const iso = toIsoDate(cur)
+      const src = byIso.get(iso)
+      const isFuture = iso > todayIso
+      if (src?.weight != null) lastWeight = src.weight
+      chartData.push({
+        iso,
+        date: fmtMD(cur),
+        // 未来（还没到的天）不显示；已过去但当天无记录时沿用前一天的体重
+        weight: isFuture ? null : (src?.weight ?? lastWeight),
+        bodyFat: src?.bodyFat ?? null,
+        waist: src?.waist ?? null,
+        hip: src?.hip ?? null,
+      })
+      cur.setDate(cur.getDate() + 1)
+    }
+  }
+  const hasChartData = chartData.some((d) => d[selectedDim] != null)
 
   return (
     <div className="profile">
@@ -272,15 +272,6 @@ export default function Profile() {
           changeLabel="来自最新记录"
           editable={!!bodyMetrics.weight}
           onSave={handleSaveWeight}
-        />
-        <MetricCard
-          icon={Percent}
-          label="体脂率"
-          value={bodyMetrics.bodyFat ?? '—'}
-          unit="%"
-          changeLabel="来自最新记录"
-          editable={!!bodyMetrics.bodyFat}
-          onSave={handleSaveBodyFat}
         />
         <MetricCard
           icon={Activity}
@@ -302,51 +293,120 @@ export default function Profile() {
                 : '—'
           }
           unit=""
-          changeLabel="已完成"
-          extra={weekly ? `${Math.round(weekly.weight_change ?? 0)}kg 体重变化` : undefined}
         />
       </div>
 
       {/* 中下分栏 */}
       <div className="profile__main">
-        {/* 左侧：趋势图 + AI 解读 */}
+        {/* 左侧：体重趋势图 */}
         <div className="profile__left">
         <div className="profile-chart card">
           <div className="profile-chart__header">
             <div className="profile-chart__dims">
-              {(Object.keys(dimensionConfig) as Dimension[]).map((dim) => (
-                <button
-                  key={dim}
-                  className={`profile-chart__dim ${selectedDim === dim ? 'profile-chart__dim--active' : ''}`}
-                  style={
-                    selectedDim === dim
-                      ? { borderColor: dimensionConfig[dim].color, color: dimensionConfig[dim].color }
-                      : {}
-                  }
-                  onClick={() => setSelectedDim(dim)}
-                >
-                  {dimensionConfig[dim].label}
-                </button>
-              ))}
-            </div>
-            <div className="profile-chart__range">
-              {(['week', 'month', 'year'] as TimeRange[]).map((r) => (
-                <button
-                  key={r}
-                  className={`profile-chart__range-btn ${timeRange === r ? 'profile-chart__range-btn--active' : ''}`}
-                  onClick={() => setTimeRange(r)}
-                >
-                  {r === 'week' ? '周' : r === 'month' ? '月' : '年'}
-                </button>
-              ))}
+              <span className="profile-chart__title">体重趋势</span>
             </div>
           </div>
 
           <div className="profile-chart__body">
-            {chartData.length === 0 ? (
+            {monthWeeksList.length > 0 && activeWeek && (
+              <div className="profile-chart__filters">
+                <div className="profile-chart__nav">
+                  {/* 年份下拉（近三年） */}
+                  <div className="profile-chart__select">
+                    <button
+                      className="profile-chart__nav-label profile-chart__nav-label--clickable"
+                      onClick={() => { setYearMenuOpen((o) => !o); setMonthMenuOpen(false); setWeekMenuOpen(false) }}
+                    >
+                      {selectedYear}年
+                      <ChevronDown size={12} className={`profile-chart__select-caret ${yearMenuOpen ? 'profile-chart__select-caret--open' : ''}`} />
+                    </button>
+                    {yearMenuOpen && (
+                      <>
+                        <div className="profile-chart__menu-overlay" onClick={() => setYearMenuOpen(false)} />
+                        <div className="profile-chart__menu profile-chart__menu--left">
+                          {yearOptions.map((year) => (
+                            <button
+                              key={year}
+                              className={`profile-chart__menu-item ${year === selectedYear ? 'profile-chart__menu-item--active' : ''}`}
+                              onClick={() => selectYear(year)}
+                            >
+                              {year}年
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {/* 月份下拉 */}
+                  <div className="profile-chart__select">
+                    <button
+                      className="profile-chart__nav-label profile-chart__nav-label--clickable"
+                      onClick={() => { setMonthMenuOpen((o) => !o); setYearMenuOpen(false); setWeekMenuOpen(false) }}
+                    >
+                      {selectedMonth}月
+                      <ChevronDown size={12} className={`profile-chart__select-caret ${monthMenuOpen ? 'profile-chart__select-caret--open' : ''}`} />
+                    </button>
+                    {monthMenuOpen && (
+                      <>
+                        <div className="profile-chart__menu-overlay" onClick={() => setMonthMenuOpen(false)} />
+                        <div className="profile-chart__menu profile-chart__menu--left">
+                          {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => {
+                            const ym = `${selectedYear}-${String(m).padStart(2, '0')}`
+                            const disabled = ym > todayIso.slice(0, 7)
+                            return (
+                              <button
+                                key={m}
+                                className={`profile-chart__menu-item ${m === selectedMonth ? 'profile-chart__menu-item--active' : ''} ${disabled ? 'profile-chart__menu-item--disabled' : ''}`}
+                                disabled={disabled}
+                                onClick={() => gotoMonth(ym)}
+                              >
+                                {m}月
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="profile-chart__select">
+                    <button
+                      className={`profile-chart__week-label profile-chart__nav-label--clickable ${isCurrentWeek ? 'profile-chart__week-label--current' : ''}`}
+                      title={isCurrentWeek ? '当前周，点击快速选择其他周' : '历史周，点击快速选择'}
+                      onClick={() => { setWeekMenuOpen((o) => !o); setYearMenuOpen(false); setMonthMenuOpen(false) }}
+                    >
+                      第{safeWeekIndex + 1}周 · {fmtMD(activeWeek.start)} – {fmtMD(activeWeek.end)}
+                      <ChevronDown size={12} className={`profile-chart__select-caret ${weekMenuOpen ? 'profile-chart__select-caret--open' : ''}`} />
+                    </button>
+                    {weekMenuOpen && (
+                      <>
+                        <div className="profile-chart__menu-overlay" onClick={() => setWeekMenuOpen(false)} />
+                        <div className="profile-chart__menu profile-chart__menu--right">
+                          {monthWeeksList.map((wk, idx) => {
+                            const disabled = toIsoDate(wk.end) > todayIso
+                            return (
+                              <button
+                                key={idx}
+                                className={`profile-chart__menu-item ${idx === safeWeekIndex ? 'profile-chart__menu-item--active' : ''} ${disabled ? 'profile-chart__menu-item--disabled' : ''}`}
+                                disabled={disabled}
+                                onClick={() => gotoWeek(idx)}
+                              >
+                                第{idx + 1}周 · {fmtMD(wk.start)} – {fmtMD(wk.end)}
+                                {toIsoDate(wk.start) <= todayIso && todayIso <= toIsoDate(wk.end) ? '（本周）' : ''}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+              </div>
+            )}
+            {/* 图表固定展示：仅完全没有历史数据时提示录入 */}
+            {!loading && history.length === 0 ? (
               <div className="profile-chart__empty">
                 <Loader2 size={20} className="spin" />
-                <span>{loading ? '加载中...' : '暂无趋势数据，点击上方体重/体脂录入第一条记录'}</span>
+                <span>暂无趋势数据，点击上方体重卡录入第一条记录</span>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -355,13 +415,13 @@ export default function Profile() {
                   <XAxis
                     dataKey="date"
                     tick={{ fontSize: 12, fill: '#94a6a1' }}
-                    axisLine={{ stroke: '#e8edec' }}
+                    axisLine={false}
                     tickLine={false}
                     interval="preserveStartEnd"
                     minTickGap={24}
                   />
                   <YAxis
-                    domain={['dataMin - 0.5', 'dataMax + 0.5']}
+                    domain={hasChartData ? ['dataMin - 0.5', 'dataMax + 0.5'] : [40, 120]}
                     tick={{ fontSize: 12, fill: '#94a6a1' }}
                     axisLine={false}
                     tickLine={false}
@@ -389,13 +449,13 @@ export default function Profile() {
                     }}
                   />
                   <Line
-                    type="monotone"
+                    type="linear"
                     dataKey={selectedDim}
                     stroke={dimensionConfig[selectedDim].color}
-                    strokeWidth={2.5}
+                    strokeWidth={2}
                     connectNulls
-                    dot={{ r: 4, fill: '#fff', stroke: dimensionConfig[selectedDim].color, strokeWidth: 2 }}
-                    activeDot={{ r: 6 }}
+                    dot={{ r: 3.5, fill: '#fff', stroke: dimensionConfig[selectedDim].color, strokeWidth: 2 }}
+                    activeDot={{ r: 5 }}
                   />
                   {(() => {
                     const last = [...chartData].reverse().find((d) => d[selectedDim] != null)
@@ -416,31 +476,8 @@ export default function Profile() {
             )}
           </div>
 
-          {/* 图表统计说明（基于当前范围内有效数据） */}
-          {chartData.length > 0 && <ChartSummary data={chartData} dim={selectedDim} />}
-        </div>
-
-        {/* AI 解读（横向紧凑，与图表同列填满剩余高度） */}
-        <div className="profile-card profile-card--ai card profile__ai-card">
-          <div className="profile-card__header">
-            <Sparkles size={16} /> AI 解读
-          </div>
-          <p className="ai-summary">
-            {aiAnalysis || '基于你的真实身体数据记录，AI 将给出阶段性分析与建议。'}
-          </p>
-          <div className="profile-ai__actions">
-            <button
-              className="btn btn-primary profile-ai-btn"
-              onClick={handleAnalyzeBody}
-              disabled={analyzing || history.length === 0}
-            >
-              {analyzing ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
-              {analyzing ? '分析中...' : 'AI 分析我的数据'}
-            </button>
-            {history.length === 0 && (
-              <p className="profile-card__empty-tip">录入体重记录后可使用 AI 分析</p>
-            )}
-          </div>
+          {/* 图表统计说明（基于当前周内有效数据） */}
+          {hasChartData && <ChartSummary data={chartData} dim={selectedDim} />}
         </div>
         </div>
 
@@ -467,14 +504,6 @@ export default function Profile() {
               <div className="profile-row">
                 <span>身高</span>
                 <span>{profile?.height_cm ? `${profile.height_cm}cm` : '—'}</span>
-              </div>
-              <div className="profile-row">
-                <span>腰围</span>
-                <span>{bodyExtras.waist ? `${bodyExtras.waist}cm` : '—'}</span>
-              </div>
-              <div className="profile-row">
-                <span>臀围</span>
-                <span>{bodyExtras.hip ? `${bodyExtras.hip}cm` : '—'}</span>
               </div>
             </div>
           </div>
@@ -530,14 +559,6 @@ export default function Profile() {
                     <span className="goal-info__value goal-info__value--accent">
                       {targetWeight != null ? `${Math.max(0, +((bodyMetrics.weight ?? 0) - targetWeight).toFixed(1))} kg` : '—'}
                     </span>
-                  </div>
-                  <div className="goal-info__row">
-                    <span>基础代谢 (BMR)</span>
-                    <span className="goal-info__value">{bmrValue === '—' ? '—' : `${bmrValue} kcal`}</span>
-                  </div>
-                  <div className="goal-info__row">
-                    <span>每日消耗 (TDEE)</span>
-                    <span className="goal-info__value">{tdeeValue === '—' ? '—' : `${tdeeValue} kcal`}</span>
                   </div>
                 </div>
               </>
@@ -625,7 +646,7 @@ function ChartSummary({ data, dim }: { data: BodyDataPoint[]; dim: Dimension }) 
   )
 }
 
-/** 指标卡片（点击数值内联编辑，保存后入库） */
+/** 指标卡片（点击数值内联编辑，保存后入库；无 footer 信息时不渲染底栏） */
 function MetricCard({
   icon: Icon,
   label,
@@ -633,7 +654,6 @@ function MetricCard({
   unit,
   change,
   changeLabel,
-  extra,
   editable = false,
   onSave,
 }: {
@@ -642,8 +662,7 @@ function MetricCard({
   value: number | string
   unit: string
   change?: number
-  changeLabel: string
-  extra?: string
+  changeLabel?: string
   editable?: boolean
   onSave?: (newValue: number) => Promise<void>
 }) {
@@ -726,19 +745,20 @@ function MetricCard({
             </>
           )}
         </div>
-        <div className="metric-card__footer">
-          {change !== undefined && change !== 0 ? (
-            <span
-              className={`metric-card__change ${change > 0 ? 'metric-card__change--up' : 'metric-card__change--down'}`}
-            >
-              {change > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-              {change > 0 ? '+' : ''}
-              {change}
-            </span>
-          ) : null}
-          <span className="metric-card__change-label">{changeLabel}</span>
-          {extra && <span className="metric-card__extra">{extra}</span>}
-        </div>
+        {(change !== undefined && change !== 0) || changeLabel ? (
+          <div className="metric-card__footer">
+            {change !== undefined && change !== 0 ? (
+              <span
+                className={`metric-card__change ${change > 0 ? 'metric-card__change--up' : 'metric-card__change--down'}`}
+              >
+                {change > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                {change > 0 ? '+' : ''}
+                {change}
+              </span>
+            ) : null}
+            {changeLabel && <span className="metric-card__change-label">{changeLabel}</span>}
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -764,29 +784,35 @@ function formatDate(iso: string | null): string {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** 按时间范围裁剪图表数据（week=最近7点，month=最近30点，year=按月聚合均值） */
-function sliceByRange(points: BodyDataPoint[], range: TimeRange): BodyDataPoint[] {
-  if (points.length === 0) return []
-  if (range === 'week') return points.slice(-7)
-  if (range === 'month') return points.slice(-30)
-  // year: 按月份聚合
-  const monthly = new Map<string, BodyDataPoint[]>()
-  for (const p of points) {
-    // date 格式 MM/DD，无法区分年份 → 用解析原始 ISO 兜底
-    const key = p.date.slice(0, 5)
-    if (!monthly.has(key)) monthly.set(key, [])
-    monthly.get(key)!.push(p)
+/** Date → 本地时区 YYYY-MM-DD */
+function toIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** 给定年月，返回覆盖该月所有日期的周区间列表（周一为一周起点，首尾周可跨月） */
+function monthWeeks(year: number, month: number): Array<{ start: Date; end: Date }> {
+  const monthEnd = new Date(year, month, 0) // 该月最后一天
+  const weeks: Array<{ start: Date; end: Date }> = []
+  const cur = new Date(year, month - 1, 1)
+  cur.setDate(cur.getDate() - ((cur.getDay() + 6) % 7)) // 回退到周一
+  while (cur <= monthEnd) {
+    const start = new Date(cur)
+    const end = new Date(cur)
+    end.setDate(end.getDate() + 6)
+    weeks.push({ start, end })
+    cur.setDate(cur.getDate() + 7)
   }
-  // 近 12 个月
-  const keys = [...monthly.keys()].slice(-12)
-  return keys.map((k) => {
-    const group = monthly.get(k)!
-    const avg = (field: 'weight' | 'bodyFat' | 'waist' | 'hip') => {
-      const vals = group.map((g) => g[field]).filter((v): v is number => v != null)
-      return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : null
-    }
-    return { date: k, weight: avg('weight'), bodyFat: avg('bodyFat'), waist: avg('waist'), hip: avg('hip') }
-  })
+  return weeks
+}
+
+/** 默认选中的周：今天所在周；今天不在该月内时，过去月取最后一周，未来月取第一周 */
+function defaultWeekIndex(weeks: Array<{ start: Date; end: Date }>, todayIso: string): number {
+  for (let i = 0; i < weeks.length; i++) {
+    const s = toIsoDate(weeks[i].start)
+    const e = toIsoDate(weeks[i].end)
+    if (s <= todayIso && todayIso <= e) return i
+  }
+  return toIsoDate(weeks[weeks.length - 1].start) <= todayIso ? weeks.length - 1 : 0
 }
 
 /** 目标进度百分比：基于历史最早体重 → 当前体重的减重进度 */

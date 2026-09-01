@@ -204,7 +204,21 @@
 }
 
 .msg__text {
-  white-space: pre-wrap;
+white-space: pre-wrap;
+}
+
+/* 聊天中上传图片的预览（用户气泡内） */
+.msg__image {
+display: block;
+max-width: 220px;
+max-height: 200px;
+width: auto;
+height: auto;
+border-radius: 10px;
+margin-bottom: 6px;
+object-fit: cover;
+cursor: zoom-in;
+box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
 .msg__meta {
@@ -789,10 +803,118 @@ padding: 0;
 }
 
 .calorie-stat__value {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
+font-size: 16px;
+font-weight: 700;
+color: var(--text-primary);
 }
+
+/* ─── 可编辑目标（热量预算/饮水目标）：悬停显现铅笔图标 ─── */
+.goal-editable {
+position: relative;
+display: inline-flex;
+align-items: center;
+padding: 0 2px;
+border: none;
+background: none;
+cursor: pointer;
+font: inherit;
+color: inherit;
+border-radius: 4px;
+transition: background 0.15s ease;
+}
+
+.goal-editable__icon {
+position: absolute;
+right: -13px;
+top: 50%;
+transform: translateY(-50%);
+opacity: 0;
+color: var(--text-tertiary);
+transition: opacity 0.15s ease;
+}
+
+.goal-editable:hover {
+background: var(--mt-50, rgba(0, 0, 0, 0.04));
+}
+
+.goal-editable:hover .goal-editable__icon {
+opacity: 1;
+}
+
+/* ─── 目标行内编辑态 ─── */
+.goal-edit {
+display: inline-flex;
+align-items: center;
+gap: 4px;
+}
+
+.goal-edit__input {
+width: 64px;
+padding: 2px 6px;
+font-size: 13px;
+font-weight: 700;
+text-align: center;
+border: 1px solid var(--mt-400, #ffc300);
+border-radius: 6px;
+outline: none;
+background: var(--bg-card, #fff);
+color: var(--text-primary);
+-moz-appearance: textfield;
+}
+
+.goal-edit__input::-webkit-inner-spin-button,
+.goal-edit__input::-webkit-outer-spin-button {
+-webkit-appearance: none;
+margin: 0;
+}
+
+.goal-edit__input:focus {
+box-shadow: 0 0 0 2px rgba(255, 195, 0, 0.2);
+}
+
+.goal-edit__input--water {
+width: 56px;
+border-color: #4db8d8;
+}
+
+.goal-edit__input--water:focus {
+box-shadow: 0 0 0 2px rgba(77, 184, 216, 0.2);
+}
+
+.goal-edit__unit {
+font-size: 11px;
+color: var(--text-tertiary);
+}
+
+.goal-edit__btn {
+display: inline-flex;
+align-items: center;
+justify-content: center;
+width: 20px;
+height: 20px;
+padding: 0;
+border: 1px solid var(--border-light, #eee3d2);
+border-radius: 50%;
+background: var(--bg-card, #fff);
+color: var(--text-secondary);
+cursor: pointer;
+transition: all 0.15s ease;
+}
+
+.goal-edit__btn--ok {
+color: var(--mt-600, #d19b00);
+border-color: var(--mt-300, #ffd54d);
+}
+
+.goal-edit__btn:hover {
+background: var(--mt-50, rgba(0, 0, 0, 0.04));
+}
+
+.goal-edit__btn:disabled {
+opacity: 0.5;
+cursor: not-allowed;
+}
+
 
 .calorie-stat__value--accent {
   color: var(--mint-500);
@@ -1769,9 +1891,20 @@ color: var(--text-tertiary);
 }
 
 .weight-modal__hint {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-bottom: 20px;
+font-size: 12px;
+color: var(--text-tertiary);
+margin-bottom: 20px;
+}
+
+/* 实时建议态：浅黄底卡片，突出本周趋势反馈 */
+.weight-modal__hint--advice {
+background: #fffbec;
+border: 1px solid #f5e6b8;
+border-radius: 10px;
+padding: 10px 12px;
+line-height: 1.7;
+color: var(--text-secondary);
+margin-bottom: 16px;
 }
 
 .weight-modal__submit {

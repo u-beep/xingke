@@ -121,9 +121,10 @@ export default function ExercisePlan() {
   const [monthRecords, setMonthRecords] = useState<Record<string, ExerciseRecordInfo[]>>({})
 
   // ── 统计图表 ──
-  const [statsFilter, setStatsFilter] = useState<StatsFilter>('month')
+  const [statsFilter, setStatsFilter] = useState<StatsFilter>('week')
   const [statsYear, setStatsYear] = useState(now.getFullYear())
   const [statsPoints, setStatsPoints] = useState<DailyStat[]>([])
+  const [hoverBar, setHoverBar] = useState<number | null>(null)
 
   const loadWeek = useCallback(async () => {
     try {
@@ -227,43 +228,53 @@ export default function ExercisePlan() {
     calories: Math.round(weekRecords.reduce((s, r) => s + (r.calories_burned || 0), 0)),
   }), [weekRecords])
 
-  // ─── 本周每日消耗热量（趋势图指标） ───
-  const dailyCalories = useMemo(() => {
-    const map = new Map<string, number>()
+  // ─── 本周每日消耗（统计卡「周」视图，含热量/时长聚合） ───
+  const weekChart = useMemo(() => {
+    const agg = new Map<string, { calories: number; duration: number }>()
     weekRecords.forEach((r) => {
       const d = r.scheduled_date || ''
-      map.set(d, (map.get(d) || 0) + (r.calories_burned || 0))
+      const prev = agg.get(d) || { calories: 0, duration: 0 }
+      agg.set(d, {
+        calories: prev.calories + (r.calories_burned || 0),
+        duration: prev.duration + (r.duration_min || 0),
+      })
     })
     const dates = weekDates()
-    const values = dates.map((d) => Math.round(map.get(d) || 0))
-    const max = Math.max(...values, 100)
-    return { dates, values, max }
+    const bars = dates.map((d, i) => {
+      const a = agg.get(d)
+      return {
+        label: WEEK_LABELS[i],
+        calories: Math.round(a?.calories || 0),
+        duration: Math.round(a?.duration || 0),
+        title: `${d.slice(5).replace('-', '/')} 周${WEEK_LABELS[i]}`,
+        isToday: d === todayStr(),
+      }
+    })
+    const max = Math.max(...bars.map((b) => b.calories), 100)
+    return { bars, max }
   }, [weekRecords])
 
   // ─── 日历选中日的记录 ───
   const selectedDayRecords = monthRecords[selectedDate] || []
   const monthRecordCount = Object.keys(monthRecords).length
 
-  // ─── 统计图表数据（按日聚合 → 周/月/年分桶） ───
+  // ─── 统计图表数据（按日聚合 → 月/年分桶；周视图用本地 weekRecords，无需请求） ───
   const statsRange = useMemo(() => {
     const t = new Date()
-    if (statsFilter === 'week') {
-      // 最近 8 周：起点为 7 周前的周一
-      const monday = mondayOf(t)
-      const start = new Date(monday)
-      start.setDate(monday.getDate() - 7 * 7)
-      return { start: toDateStr(start), end: toDateStr(t) }
-    }
     if (statsFilter === 'month') {
       // 最近 12 个月
       const start = new Date(t.getFullYear(), t.getMonth() - 11, 1)
       return { start: toDateStr(start), end: toDateStr(t) }
     }
-    // 按年：整年区间，可切换到任意历史年份
-    return { start: `${statsYear}-01-01`, end: `${statsYear}-12-31` }
+    if (statsFilter === 'year') {
+      // 按年：整年区间，可切换到任意历史年份
+      return { start: `${statsYear}-01-01`, end: `${statsYear}-12-31` }
+    }
+    return null
   }, [statsFilter, statsYear])
 
   useEffect(() => {
+    if (!statsRange) return
     exerciseApi.stats(statsRange.start, statsRange.end)
       .then((res) => setStatsPoints(res?.stats || []))
       .catch(() => setStatsPoints([]))
@@ -271,35 +282,9 @@ export default function ExercisePlan() {
 
   const statsChart = useMemo(() => {
     const statMap = new Map(statsPoints.map((p) => [p.date, p]))
-    const buckets: Array<{ label: string; calories: number; duration: number; title: string }> = []
+    const buckets: Array<{ label: string; calories: number; duration: number; title: string; isToday?: boolean }> = []
 
-    if (statsFilter === 'week') {
-      // 最近 8 周，横轴为每周
-      const thisMonday = mondayOf(new Date())
-      for (let i = 7; i >= 0; i--) {
-        const monday = new Date(thisMonday)
-        monday.setDate(thisMonday.getDate() - i * 7)
-        const sunday = new Date(monday)
-        sunday.setDate(monday.getDate() + 6)
-        let calories = 0
-        let dur = 0
-        for (let j = 0; j < 7; j++) {
-          const d = new Date(monday)
-          d.setDate(monday.getDate() + j)
-          const p = statMap.get(toDateStr(d))
-          if (p) {
-            calories += p.calories
-            dur += p.duration_min
-          }
-        }
-        buckets.push({
-          label: `${String(monday.getMonth() + 1).padStart(2, '0')}/${String(monday.getDate()).padStart(2, '0')}`,
-          calories: Math.round(calories),
-          duration: dur,
-          title: `${toDateStr(monday)} ~ ${toDateStr(sunday)}`,
-        })
-      }
-    } else if (statsFilter === 'month') {
+    if (statsFilter === 'month') {
       // 最近 12 个月，横轴按月
       const t = new Date()
       for (let i = 11; i >= 0; i--) {
@@ -329,6 +314,27 @@ export default function ExercisePlan() {
     const max = Math.max(...buckets.map((b) => b.calories), 100)
     return { buckets, max }
   }, [statsPoints, statsFilter, statsYear])
+
+  // ─── 统计卡渲染数据（周视图取本地聚合，月/年取接口分桶） ───
+  const chartBars = statsFilter === 'week'
+    ? weekChart.bars
+    : statsChart.buckets
+  const chartMax = statsFilter === 'week' ? weekChart.max : statsChart.max
+  const chartSummary = useMemo(() => ({
+    total: chartBars.reduce((s, b) => s + b.calories, 0),
+    dur: chartBars.reduce((s, b) => s + b.duration, 0),
+  }), [chartBars])
+  const chartPeakIdx = useMemo(() => {
+    let idx = -1
+    let best = 0
+    chartBars.forEach((b, i) => {
+      if (b.calories > best) {
+        best = b.calories
+        idx = i
+      }
+    })
+    return idx
+  }, [chartBars])
 
   // ─── 运动计划操作 ───
   const handleAddExercise = async () => {
@@ -454,6 +460,7 @@ export default function ExercisePlan() {
   // ─── 统计筛选 ───
   const handleStatsFilter = (f: StatsFilter) => {
     setStatsFilter(f)
+    setHoverBar(null)
     if (f === 'year') setStatsYear(new Date().getFullYear())
   }
 
@@ -489,43 +496,12 @@ export default function ExercisePlan() {
         </div>
       </div>
 
-      {/* ─── 本周消耗热量趋势 ─── */}
-      <div className="exercise-plan__trend card">
-        <div className="exercise-trend__header">
-          <TrendingUp size={16} />
-          <span>本周运动量（消耗热量）</span>
-        </div>
-        <div className="exercise-trend__chart">
-          {dailyCalories.values.map((v, i) => (
-            <div key={i} className="exercise-trend__col">
-              <div className="exercise-trend__bar-wrap">
-                <div
-                  className="exercise-trend__bar"
-                  style={{ height: `${Math.max((v / dailyCalories.max) * 100, v > 0 ? 8 : 3)}%` }}
-                  title={`${dailyCalories.dates[i]}: ${v} kcal`}
-                />
-              </div>
-              <span className="exercise-trend__label">
-                {WEEK_LABELS[i]}
-                {dailyCalories.dates[i] === todayStr() && <i className="exercise-trend__dot" />}
-              </span>
-              <span className="exercise-trend__value">{v > 0 ? `${v}kcal` : ''}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ─── 运动统计（周/月/年） ─── */}
+      {/* ─── 运动统计（周/月/年，统一的交互与汇总信息） ─── */}
       <div className="exercise-plan__stats card">
         <div className="exercise-stats__header">
           <div className="exercise-trend__header exercise-stats__title">
             <TrendingUp size={16} />
             <span>运动统计</span>
-            <em>
-              {statsFilter === 'week' && '近 8 周 · 按周汇总'}
-              {statsFilter === 'month' && '近 12 个月 · 按月汇总'}
-              {statsFilter === 'year' && `${statsYear} 年 · 按月分布`}
-            </em>
           </div>
           <div className="exercise-stats__filters">
             <div className="ep-tabs ep-tabs--inline">
@@ -552,21 +528,43 @@ export default function ExercisePlan() {
             )}
           </div>
         </div>
-        <div className="exercise-trend__chart exercise-stats__chart">
-          {statsChart.buckets.map((b, i) => (
-            <div key={i} className="exercise-trend__col" title={`${b.title}: ${b.calories} kcal · ${b.duration} 分钟`}>
+        {/* 汇总/悬停明细行：默认显示合计，悬停某柱时切换为该柱明细 */}
+        <div className="exercise-stats__meta">
+          <em>
+            {statsFilter === 'week' && '本周 · 按天统计'}
+            {statsFilter === 'month' && '近 12 个月 · 按月汇总'}
+            {statsFilter === 'year' && `${statsYear} 年 · 按月分布`}
+          </em>
+          <span className="exercise-stats__detail">
+            {hoverBar !== null && chartBars[hoverBar]
+              ? `${chartBars[hoverBar].title}：${chartBars[hoverBar].calories} kcal · ${chartBars[hoverBar].duration} 分钟`
+              : `合计 ${chartSummary.total} kcal · ${chartSummary.dur} 分钟`}
+          </span>
+        </div>
+        <div className="exercise-trend__chart exercise-stats__chart" onMouseLeave={() => setHoverBar(null)}>
+          {chartBars.map((b, i) => (
+            <div
+              key={i}
+              className={`exercise-trend__col ${hoverBar === i ? 'exercise-trend__col--active' : ''}`}
+              onMouseEnter={() => setHoverBar(i)}
+            >
               <div className="exercise-trend__bar-wrap">
+                {chartPeakIdx === i && b.calories > 0 && (
+                  <span className="exercise-trend__peak">{b.calories}</span>
+                )}
                 <div
-                  className="exercise-trend__bar"
-                  style={{ height: `${Math.max((b.calories / statsChart.max) * 100, b.calories > 0 ? 8 : 3)}%` }}
+                  className={`exercise-trend__bar ${b.calories <= 0 ? 'exercise-trend__bar--zero' : ''} ${b.isToday ? 'exercise-trend__bar--today' : ''}`}
+                  style={b.calories > 0 ? { height: `${Math.max((b.calories / chartMax) * 80, 6)}%` } : undefined}
                 />
               </div>
-              <span className="exercise-trend__label">{b.label}</span>
-              <span className="exercise-trend__value">{b.calories > 0 ? `${b.calories}` : ''}</span>
+              <span className={`exercise-trend__label ${b.isToday ? 'exercise-trend__label--today' : ''}`}>
+                {b.label}
+                {b.isToday && <i className="exercise-trend__dot" />}
+              </span>
             </div>
           ))}
         </div>
-        <div className="exercise-stats__unit">单位：kcal（悬停查看时长明细）</div>
+        <div className="exercise-stats__unit">单位：kcal · 悬停柱形查看明细</div>
       </div>
 
       <div className="exercise-plan__grid">

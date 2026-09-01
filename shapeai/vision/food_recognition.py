@@ -15,6 +15,7 @@ import base64
 import json
 import logging
 import re
+import time
 from typing import Optional
 
 from ..config import FOOD_ALIAS, FOOD_DATABASE
@@ -61,17 +62,27 @@ class FoodRecognitionService:
                 return {"error": preprocessed["message"], "recognized": []}
 
         # 识别路径选择：
-        # 1) 优先多模态视觉模型识别图片中的食材
+        # 1) 优先多模态视觉模型识别图片中的食物（先完整菜品，再拆解食材）
         # 2) 退而求其次用文字描述 + 营养库规则匹配
+        dish = ""
         if image_base64 and self.gateway and self._gateway_supports_image():
-            results = self._recognize_by_vision(image_base64, user_id)
+            try:
+                results, dish = self._recognize_by_vision(image_base64, user_id)
+            except Exception as exc:
+                # 多次重试后仍失败，才返回失败结果
+                logger.warning("视觉识别重试后仍失败: %s", exc)
+                return {
+                    "error": f"视觉识别失败：{exc}",
+                    "recognized": [],
+                    "dish": "",
+                }
         elif description:
             results = self._recognize_by_description(description, user_id)
         elif image_base64 and self.gateway:
             # 有图片但视觉模型不可用，降级到文本路径
             results = self._recognize_by_llm_description("用户上传了一张食物图片", user_id)
         else:
-            return {"error": "请提供图片或食物描述", "recognized": []}
+            return {"error": "请提供图片或食物描述", "recognized": [], "dish": ""}
 
         # 低置信度结果归集
         for r in results:
@@ -80,6 +91,7 @@ class FoodRecognitionService:
 
         return {
             "recognized": results,
+            "dish": dish or (results[0].get("name", "") if results else ""),
             "total_items": len(results),
             "total_calories": sum(r.get("calories", 0) for r in results),
         }
@@ -89,75 +101,108 @@ class FoodRecognitionService:
         return getattr(self.gateway, "vision", None) is not None or \
             getattr(self.gateway, "supports_image", lambda: False)()
 
-    def _recognize_by_vision(self, image_base64: str, user_id: str) -> list[dict]:
-        """使用多模态视觉模型识别图片中的食材。
+    def _recognize_by_vision(self, image_base64: str, user_id: str) -> tuple[list[dict], str]:
+        """使用多模态视觉模型识别图片中的食物。
 
-        返回结构化食材列表：name / category / quantity_g / unit / confidence，
-        并附带营养参考（命中内置营养库时）与 food_name 兼容字段。
+        先让模型判断完整食物/菜品，再拆解食材明细。
+        返回 (食材列表, 完整食物名称)；多次重试后仍失败则抛出 RuntimeError。
         """
         food_names_hint = "、".join(self._food_db.keys())
-        prompt = f"""请识别这张冰箱/食材照片中出现的所有食材（仅原始食材，不要成品菜肴）。
+        prompt = f"""请识别这张照片中的食物。先判断图中完整的食物或菜品是什么（如"火腿三明治"、"蔬菜沙拉"），再拆解出其中包含的食材。
 
 已知食材名称参考（优先使用这些名称以便营养对齐）：{food_names_hint}
 
 要求：
-1. 仅返回严格 JSON 数组，不要 markdown 代码块、不要解释文字。
-2. 每个元素：{{"name":"食材名","category":"分类","quantity_g":整数克数估值,"unit":"g或个或包或ml","confidence":0.0-1.0}}
-3. category 从 [蔬菜, 肉蛋, 主食, 水果, 乳制品, 调味, 其他] 中选择。
-4. 如果不是食材图片或无法识别，返回空数组 []。
+1. 仅返回严格 JSON 对象，不要 markdown 代码块、不要解释文字，格式：
+{{"dish":"完整食物或菜品的名称","ingredients":[{{"name":"食材名","category":"分类","quantity_g":整数克数估值,"unit":"g或个或包或ml","confidence":0.0-1.0}}]}}
+2. category 从 [蔬菜, 肉蛋, 主食, 水果, 乳制品, 调味, 其他] 中选择。
+3. 如果照片中没有食物或无法识别，返回 {{"dish":"","ingredients":[]}}。
 
 输出："""
 
-        try:
-            response = self.gateway.complete_with_image(
-                prompt, image_base64, max_new_tokens=1024,
-                user_id=user_id, scene="fridge_recognition",
-            )
-            items = self._parse_ingredient_response(response)
-            # 营养对齐 + 兼容字段
-            for it in items:
-                name = it.get("name", "")
-                it["food_name"] = name
-                # 别名 → 标准名,再精确/模糊匹配
-                std_name = FOOD_ALIAS.get(name, name)
-                nutrition = (
-                    self._food_db.get(std_name)
-                    or self._food_db.get(name)
-                    or self._fuzzy_match_food(name)
+        last_error = ""
+        for attempt in range(3):
+            try:
+                response = self.gateway.complete_with_image(
+                    prompt, image_base64, max_new_tokens=1024,
+                    user_id=user_id, scene="fridge_recognition",
                 )
-                if nutrition:
-                    qty = it.get("quantity_g", 100) or 100
-                    mult = qty / 100.0
-                    it["calories"] = round(nutrition["calories"] * mult, 1)
-                    it["protein"] = round(nutrition["protein"] * mult, 1)
-                    it["carbs"] = round(nutrition["carbs"] * mult, 1)
-                    it["fat"] = round(nutrition["fat"] * mult, 1)
-                    it.setdefault("unit", nutrition.get("unit", "g"))
-                else:
-                    it.setdefault("calories", 0)
-                    it.setdefault("protein", 0)
-                    it.setdefault("carbs", 0)
-                    it.setdefault("fat", 0)
-                it.setdefault("quantity_g", it.get("quantity_g", 0) or 0)
-                it.setdefault("unit", "g")
-                it.setdefault("category", "")
-                it.setdefault("confidence", 0.8)
-            return items
-        except Exception as exc:
-            logger.warning("视觉模型识别失败: %s", exc)
-            return [{
-                "name": "未知",
-                "food_name": "未知",
-                "confidence": 0.1,
-                "message": f"视觉识别服务暂时不可用: {exc}",
-                "quantity_g": 0,
-                "unit": "g",
-                "category": "",
-                "calories": 0,
-                "protein": 0,
-                "carbs": 0,
-                "fat": 0,
-            }]
+                dish, items = self._parse_vision_response(response)
+                if items:
+                    return self._enrich_items(items), dish
+                last_error = "模型未识别到食物"
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning("视觉模型识别第 %d 次尝试失败: %s", attempt + 1, exc)
+            if attempt < 2:
+                time.sleep(1.0 * (attempt + 1))
+        raise RuntimeError(last_error or "视觉识别失败")
+
+    def _enrich_items(self, items: list[dict]) -> list[dict]:
+        """营养对齐 + 兼容字段补充。"""
+        for it in items:
+            name = it.get("name", "")
+            it["food_name"] = name
+            # 别名 → 标准名,再精确/模糊匹配
+            std_name = FOOD_ALIAS.get(name, name)
+            nutrition = (
+                self._food_db.get(std_name)
+                or self._food_db.get(name)
+                or self._fuzzy_match_food(name)
+            )
+            if nutrition:
+                qty = it.get("quantity_g", 100) or 100
+                mult = qty / 100.0
+                it["calories"] = round(nutrition["calories"] * mult, 1)
+                it["protein"] = round(nutrition["protein"] * mult, 1)
+                it["carbs"] = round(nutrition["carbs"] * mult, 1)
+                it["fat"] = round(nutrition["fat"] * mult, 1)
+                it.setdefault("unit", nutrition.get("unit", "g"))
+            else:
+                it.setdefault("calories", 0)
+                it.setdefault("protein", 0)
+                it.setdefault("carbs", 0)
+                it.setdefault("fat", 0)
+            it.setdefault("quantity_g", it.get("quantity_g", 0) or 0)
+            it.setdefault("unit", "g")
+            it.setdefault("category", "")
+            it.setdefault("confidence", 0.8)
+        return items
+
+    @staticmethod
+    def _parse_vision_response(response: str) -> tuple[str, list[dict]]:
+        """解析视觉模型返回结果，兼容多种格式。
+
+        支持：{"dish":..., "ingredients":[...]}、{"recognized":[...]}、裸数组 [...]。
+        返回 (dish, 食材列表)。
+        """
+        if not response:
+            return "", []
+        # 去除可能的 markdown 代码块围栏
+        text = response.strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        data = None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            # 正则兜底提取 JSON 片段
+            match = re.search(r'\{[\s\S]*\}', response) or re.search(r'\[[\s\S]*\]', response)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                except json.JSONDecodeError:
+                    return "", []
+        if isinstance(data, dict):
+            items = data.get("ingredients") or data.get("recognized") or []
+            dish = str(data.get("dish") or "").strip()
+            return dish, [d for d in items if isinstance(d, dict) and d.get("name")]
+        if isinstance(data, list):
+            return "", [d for d in data if isinstance(d, dict) and d.get("name")]
+        return "", []
 
     def _fuzzy_match_food(self, name: str) -> dict | None:
         """食材名精确匹配失败时的模糊匹配:双向子串包含。
@@ -174,38 +219,6 @@ class FoodRecognitionService:
             if len(key) >= 2 and name in key:
                 return val
         return None
-
-    @staticmethod
-    def _parse_ingredient_response(response: str) -> list[dict]:
-        """解析视觉模型返回的食材 JSON 数组。"""
-        if not response:
-            return []
-        # 去除可能的 markdown 代码块围栏
-        text = response.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:]
-            text = text.strip()
-        try:
-            data = json.loads(text)
-            if isinstance(data, list):
-                return [d for d in data if isinstance(d, dict) and d.get("name")]
-            if isinstance(data, dict) and "recognized" in data:
-                return [d for d in data["recognized"] if isinstance(d, dict) and d.get("name")]
-            if isinstance(data, dict) and "ingredients" in data:
-                return [d for d in data["ingredients"] if isinstance(d, dict) and d.get("name")]
-        except json.JSONDecodeError:
-            pass
-        # 正则兜底提取 JSON 数组
-        match = re.search(r'\[[\s\S]*\]', response)
-        if match:
-            try:
-                data = json.loads(match.group())
-                return [d for d in data if isinstance(d, dict) and d.get("name")]
-            except json.JSONDecodeError:
-                pass
-        return []
 
     def _recognize_by_description(self, description: str, user_id: str) -> list[dict]:
         """基于文字描述识别食物。

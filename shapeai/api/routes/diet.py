@@ -1,7 +1,7 @@
 """饮食记录 API 路由。"""
 
 import logging
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -13,29 +13,148 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/diet", tags=["饮食记录"])
 
 
+def _macro_targets_budget(targets: dict) -> int:
+    """由三大营养素目标推算每日热量预算(kcal)：蛋白/碳水 4kcal、脂肪 9kcal。"""
+    return int(round(
+        targets["protein_g"] * 4 + targets["carbs_g"] * 4 + targets["fat_g"] * 9
+    ))
+
+
+def _compute_default_macro_targets(profile) -> Optional[dict]:
+    """根据当前体重/身高/BMI 计算三大营养素每日默认目标(g)，缺身体数据返回 None。
+
+    按 BMI 分层（g/kg 体重）：
+    - 偏瘦(<18.5，增重)：蛋白 1.2 / 碳水 4.5 / 脂肪 1.2
+    - 正常(18.5~24)：蛋白 1.5 / 碳水 3.0 / 脂肪 1.0
+    - 超重(24~28)：蛋白 1.8 / 碳水 2.5 / 脂肪 0.8
+    - 肥胖(>=28，减脂)：蛋白 2.0 / 碳水 2.2 / 脂肪 0.7
+    """
+    if not (profile.weight_kg and profile.height_cm):
+        return None
+    try:
+        h = float(profile.height_cm) / 100
+        bmi = float(profile.weight_kg) / (h * h)
+        w = float(profile.weight_kg)
+        if bmi < 18.5:
+            p, c, f = 1.2 * w, 4.5 * w, 1.2 * w
+        elif bmi < 24:
+            p, c, f = 1.5 * w, 3.0 * w, 1.0 * w
+        elif bmi < 28:
+            p, c, f = 1.8 * w, 2.5 * w, 0.8 * w
+        else:
+            p, c, f = 2.0 * w, 2.2 * w, 0.7 * w
+        # 取 5g 步长，避免出现零碎数字
+        return {
+            "protein_g": int(round(p / 5) * 5),
+            "carbs_g": int(round(c / 5) * 5),
+            "fat_g": int(round(f / 5) * 5),
+        }
+    except Exception:
+        return None
+
+
+def _resolve_macro_targets(profile, store, today: str) -> Optional[dict]:
+    """获取当日生效的三大营养素目标。
+
+    - 目标已设置且 macro_targets_date == 今天：直接使用（用户当天调整过的自定义值）
+    - 否则：按当前体重/身高/BMI 重新生成默认值，落库并同步推算预算
+    """
+    if (profile.protein_target_g and profile.carbs_target_g and profile.fat_target_g
+            and profile.macro_targets_date == today):
+        return {
+            "protein_g": float(profile.protein_target_g),
+            "carbs_g": float(profile.carbs_target_g),
+            "fat_g": float(profile.fat_target_g),
+            "custom": True,
+        }
+    defaults = _compute_default_macro_targets(profile)
+    if not defaults:
+        return None
+    # 落库：目标 + 日期 + 由目标推算的预算，保证各页面口径一致
+    profile.protein_target_g = defaults["protein_g"]
+    profile.carbs_target_g = defaults["carbs_g"]
+    profile.fat_target_g = defaults["fat_g"]
+    profile.macro_targets_date = today
+    profile.daily_calorie_budget = _macro_targets_budget(defaults)
+    store.save(profile)
+    return {**defaults, "custom": False}
+
+
 def _inject_real_budget(summary: dict, user_id: str) -> dict:
-    """用 ProfileStore 的用户自定义预算覆盖 summary 里的硬编码 budget，重算 remaining/goal_achieved。"""
+    """注入当日营养素目标与预算（预算由营养素目标自动推算），重算 remaining/goal_achieved。"""
     try:
         from ...user_profile import ProfileStore
-        profile = ProfileStore().get(user_id)
-        budget = profile.daily_calorie_budget
-        if budget is None:
-            # 未自定义则用身体数据算的 TDEE 建议
+        from datetime import datetime as _dt
+        store = ProfileStore()
+        profile = store.get(user_id)
+        today = _dt.now().strftime("%Y-%m-%d")
+        targets = _resolve_macro_targets(profile, store, today)
+        if targets:
+            summary["protein_target_g"] = targets["protein_g"]
+            summary["carbs_target_g"] = targets["carbs_g"]
+            summary["fat_target_g"] = targets["fat_g"]
+            summary["budget"] = _macro_targets_budget(targets)
+            summary["budget_source"] = "macro_custom" if targets["custom"] else "macro_auto"
+        elif profile.daily_calorie_budget is not None:
+            # 无身体数据但有历史预算：沿用
+            summary["budget"] = profile.daily_calorie_budget
+            summary["budget_source"] = "custom"
+        else:
+            # 兜底：用身体数据算 TDEE 建议
             from .profile import _compute_suggested_tdee
             budget = _compute_suggested_tdee(profile)
-        if budget:
-            summary["budget"] = budget
-            consumed = summary.get("total_calories", 0)
-            summary["remaining"] = round(budget - consumed, 1)
-            summary["goal_achieved"] = consumed >= budget
-            summary["budget_source"] = "custom" if profile.daily_calorie_budget else "tdee_suggested"
-        else:
-            summary["budget_source"] = "default"
+            if budget:
+                summary["budget"] = budget
+                summary["budget_source"] = "tdee_suggested"
+            else:
+                summary["budget_source"] = "default"
+        consumed = summary.get("total_calories", 0)
+        summary["remaining"] = round(float(summary.get("budget", 1600)) - consumed, 1)
+        summary["goal_achieved"] = consumed >= float(summary.get("budget", 1600))
         return summary
     except Exception as exc:
         logger.warning("注入用户热量预算失败，用默认: %s", exc)
         summary["budget_source"] = "default"
         return summary
+
+
+class MacroTargetsRequest(BaseModel):
+    """调整三大营养素每日目标请求（调整后预算热量自动重算）。"""
+    user_id: Optional[str] = Field(None, description="用户ID，未传则取 X-User-Id 头")
+    protein_g: float = Field(..., gt=0, le=500, description="蛋白质目标(g)")
+    carbs_g: float = Field(..., gt=0, le=800, description="碳水目标(g)")
+    fat_g: float = Field(..., gt=0, le=300, description="脂肪目标(g)")
+
+
+@router.put("/macro-targets", summary="调整三大营养素每日目标")
+async def set_macro_targets(body: MacroTargetsRequest, req: Request):
+    """保存用户自定义的营养素目标（当日生效），并同步重算热量预算。
+
+    预算热量 = 蛋白×4 + 碳水×4 + 脂肪×9，不可手动修改。
+    """
+    user_id = get_auth_user_id(req, body.user_id)
+    from ...user_profile import ProfileStore
+    from datetime import datetime as _dt
+    store = ProfileStore()
+    profile = store.get(user_id)
+    targets = {
+        "protein_g": float(body.protein_g),
+        "carbs_g": float(body.carbs_g),
+        "fat_g": float(body.fat_g),
+    }
+    profile.protein_target_g = targets["protein_g"]
+    profile.carbs_target_g = targets["carbs_g"]
+    profile.fat_target_g = targets["fat_g"]
+    profile.macro_targets_date = _dt.now().strftime("%Y-%m-%d")
+    profile.daily_calorie_budget = _macro_targets_budget(targets)
+    if not store.save(profile):
+        raise HTTPException(status_code=500, detail="保存营养素目标失败")
+    return {
+        "success": True,
+        "user_id": user_id,
+        "targets": targets,
+        "budget": profile.daily_calorie_budget,
+    }
 
 
 class DietRecordRequest(BaseModel):
@@ -87,21 +206,48 @@ async def get_today_diet(req: Request):
     }
 
 
+def _summary_with_fridge(store, user_id: str, date_str: str, summary: dict) -> dict:
+    """在饮食统计基础上合并冰箱菜谱餐次营养，保证与 /diet/daily 口径一致。"""
+    from datetime import datetime as _dt
+    from ...records import FridgeStore
+    try:
+        target = _dt.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return summary
+    fridge_meals = FridgeStore().list_meal_logs(user_id, target)
+    if not fridge_meals:
+        return summary
+    fridge_cal = round(sum(float(m.get("total_calories") or 0) for m in fridge_meals), 1)
+    summary["total_calories"] = round(float(summary.get("total_calories") or 0) + fridge_cal, 1)
+    summary["total_protein_g"] = round(float(summary.get("total_protein_g") or 0)
+        + sum(float(m.get("total_protein_g") or 0) for m in fridge_meals), 1)
+    summary["total_carbs_g"] = round(float(summary.get("total_carbs_g") or 0)
+        + sum(float(m.get("total_carbs_g") or 0) for m in fridge_meals), 1)
+    summary["total_fat_g"] = round(float(summary.get("total_fat_g") or 0)
+        + sum(float(m.get("total_fat_g") or 0) for m in fridge_meals), 1)
+    if summary.get("remaining") is not None:
+        summary["remaining"] = round(summary["remaining"] - fridge_cal, 1)
+    if summary.get("budget"):
+        summary["goal_achieved"] = float(summary["total_calories"]) >= float(summary["budget"])
+    summary["fridge_calories"] = fridge_cal
+    return summary
+
+
 @router.get("/summary", summary="按日期获取饮食统计")
 async def get_diet_summary(req: Request, user_id: str = "anonymous", date: str = None):
-    """获取指定日期的饮食统计。
+    """获取指定日期的饮食统计（含冰箱菜谱餐次，与饮食记录页口径一致）。
 
     Args:
         user_id: 用户ID（登录态优先，参数仅作未鉴权回退）
         date: 日期 YYYY-MM-DD，不传默认今天
     """
+    from datetime import datetime as _dt
     user_id = get_auth_user_id(req, user_id)
+    if not date:
+        date = _dt.now().strftime("%Y-%m-%d")
     store = DietStore()
-    if date:
-        summary = _inject_real_budget(store.get_summary_by_date(user_id, date), user_id)
-    else:
-        summary = _inject_real_budget(store.get_today_summary(user_id), user_id)
-    return summary
+    summary = _inject_real_budget(store.get_summary_by_date(user_id, date), user_id)
+    return _summary_with_fridge(store, user_id, date, summary)
 
 
 class DietConfirmRequest(BaseModel):
