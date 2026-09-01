@@ -22,6 +22,17 @@ from ..config import FOOD_ALIAS, FOOD_DATABASE
 
 logger = logging.getLogger(__name__)
 
+# 营养库未命中的食材按分类给保守估值（每100g），避免出现 0kcal 的明显不合理记录
+_CATEGORY_FALLBACK_NUTRITION = {
+"蔬菜": {"calories": 25, "protein": 1.2, "carbs": 4.5, "fat": 0.2},
+"肉蛋": {"calories": 170, "protein": 18.0, "carbs": 1.0, "fat": 10.0},
+"主食": {"calories": 180, "protein": 5.0, "carbs": 35.0, "fat": 2.0},
+"水果": {"calories": 55, "protein": 0.6, "carbs": 13.0, "fat": 0.3},
+"乳制品": {"calories": 130, "protein": 8.0, "carbs": 6.0, "fat": 8.0},
+"调味": {"calories": 320, "protein": 2.0, "carbs": 15.0, "fat": 28.0},
+"其他": {"calories": 150, "protein": 4.0, "carbs": 18.0, "fat": 6.0},
+}
+
 
 class FoodRecognitionService:
     """食物图像识别服务。
@@ -39,6 +50,8 @@ class FoodRecognitionService:
         self.gateway = gateway
         self._low_confidence_log: list[dict] = []
         self._food_db = FOOD_DATABASE
+        # 营养库外食材的营养缓存：模型查询结果留存，避免重复请求
+        self._nutrition_cache: dict[str, dict] = {}
 
     def recognize(
         self,
@@ -129,7 +142,7 @@ class FoodRecognitionService:
                 )
                 dish, items = self._parse_vision_response(response)
                 if items:
-                    return self._enrich_items(items), dish
+                    return self._enrich_items(items, user_id), dish
                 last_error = "模型未识别到食物"
             except Exception as exc:
                 last_error = str(exc)
@@ -138,8 +151,31 @@ class FoodRecognitionService:
                 time.sleep(1.0 * (attempt + 1))
         raise RuntimeError(last_error or "视觉识别失败")
 
-    def _enrich_items(self, items: list[dict]) -> list[dict]:
-        """营养对齐 + 兼容字段补充。"""
+    def _apply_nutrition(self, item: dict, nutrition: dict) -> None:
+        """把每100g营养数据按食材克重换算后写入条目。"""
+        qty = item.get("quantity_g", 100) or 100
+        mult = qty / 100.0
+        item["calories"] = round(float(nutrition.get("calories", 0)) * mult, 1)
+        item["protein"] = round(float(nutrition.get("protein", 0)) * mult, 1)
+        item["carbs"] = round(float(nutrition.get("carbs", 0)) * mult, 1)
+        item["fat"] = round(float(nutrition.get("fat", 0)) * mult, 1)
+        item.setdefault("unit", nutrition.get("unit", "g"))
+
+    def _apply_category_estimate(self, item: dict) -> None:
+        """在线查询也不可得时，按分类给保守估值（绝不允许 0 值营养）。"""
+        qty = item.get("quantity_g", 100) or 100
+        mult = qty / 100.0
+        est = _CATEGORY_FALLBACK_NUTRITION.get(item.get("category", ""), _CATEGORY_FALLBACK_NUTRITION["其他"])
+        item["calories"] = round(est["calories"] * mult, 1)
+        item["protein"] = round(est["protein"] * mult, 1)
+        item["carbs"] = round(est["carbs"] * mult, 1)
+        item["fat"] = round(est["fat"] * mult, 1)
+        logger.info("食材 %s 在线营养查询不可得，按分类 %s 估算: %skcal/%.0fg",
+                    item.get("name", ""), item.get("category", "其他"), item["calories"], qty)
+
+    def _enrich_items(self, items: list[dict], user_id: str = "anonymous") -> list[dict]:
+        """营养对齐：本地营养库 → 模型知识在线查询 → 分类估算兜底。"""
+        pending: list[tuple[dict, str]] = []  # 未命中 (条目, 标准名)
         for it in items:
             name = it.get("name", "")
             it["food_name"] = name
@@ -151,23 +187,113 @@ class FoodRecognitionService:
                 or self._fuzzy_match_food(name)
             )
             if nutrition:
-                qty = it.get("quantity_g", 100) or 100
-                mult = qty / 100.0
-                it["calories"] = round(nutrition["calories"] * mult, 1)
-                it["protein"] = round(nutrition["protein"] * mult, 1)
-                it["carbs"] = round(nutrition["carbs"] * mult, 1)
-                it["fat"] = round(nutrition["fat"] * mult, 1)
-                it.setdefault("unit", nutrition.get("unit", "g"))
+                self._apply_nutrition(it, nutrition)
+                it.setdefault("category", "")
+                it.setdefault("confidence", 0.8)
             else:
-                it.setdefault("calories", 0)
-                it.setdefault("protein", 0)
-                it.setdefault("carbs", 0)
-                it.setdefault("fat", 0)
+                pending.append((it, std_name))
+
+        if pending:
+            fetched: dict[str, dict] = {}
+            if self.gateway:
+                try:
+                    fetched = self._lookup_nutrition_online([std for _, std in pending], user_id)
+                except Exception as exc:
+                    logger.warning("在线查询营养失败，改用分类估算: %s", exc)
+            for it, std_name in pending:
+                nutrition = fetched.get(std_name) or fetched.get(it.get("name", ""))
+                if nutrition and float(nutrition.get("calories", 0) or 0) > 0:
+                    self._apply_nutrition(it, nutrition)
+                else:
+                    self._apply_category_estimate(it)
+
+        for it in items:
             it.setdefault("quantity_g", it.get("quantity_g", 0) or 0)
             it.setdefault("unit", "g")
             it.setdefault("category", "")
             it.setdefault("confidence", 0.8)
         return items
+
+    def _lookup_nutrition_online(self, names: list[str], user_id: str) -> dict[str, dict]:
+        """本地营养库未命中时，用模型知识查询食物营养（每100g）。
+
+        结果缓存在实例内，同一食材只查询一次。
+        Returns:
+            {食物名: {calories, protein, carbs, fat}}（仅包含查询成功的条目）
+        """
+        result: dict[str, dict] = {}
+        missing: list[str] = []
+        for name in names:
+            cached = self._nutrition_cache.get(name)
+            if cached:
+                result[name] = cached
+            else:
+                missing.append(name)
+        if not missing:
+            return result
+
+        prompt = f"""请查询以下食物每100g的营养成分（参考《中国食物成分表》等权威营养数据）：
+
+{json.dumps(missing, ensure_ascii=False)}
+
+仅返回严格 JSON 对象，不要 markdown 代码块、不要解释文字，格式：
+{{"nutrition": {{"食物名": {{"calories": 热量kcal, "protein": 蛋白质g, "carbs": 碳水g, "fat": 脂肪g}}}}}}
+
+要求：
+1. 数值必须是每100g可食部分的合理值（常见烹调状态）。
+2. 不确定时给出保守估计，禁止返回 0 或负数。
+
+输出："""
+
+        response = self.gateway.complete(
+            prompt, max_new_tokens=1024,
+            user_id=user_id, scene="nutrition_lookup",
+        )
+        data = self._parse_json_object(response)
+        lookup = data.get("nutrition") if isinstance(data, dict) else None
+        if isinstance(lookup, dict):
+            for name, val in lookup.items():
+                if not isinstance(val, dict):
+                    continue
+                try:
+                    entry = {
+                        "calories": float(val.get("calories", 0) or 0),
+                        "protein": float(val.get("protein", 0) or 0),
+                        "carbs": float(val.get("carbs", 0) or 0),
+                        "fat": float(val.get("fat", 0) or 0),
+                    }
+                except (TypeError, ValueError):
+                    continue
+                if entry["calories"] <= 0:
+                    continue
+                result[name] = entry
+                self._nutrition_cache[name] = entry
+                logger.info("食材 %s 通过模型知识获取营养: %skcal/100g", name, entry["calories"])
+        return result
+
+    @staticmethod
+    def _parse_json_object(response: str) -> dict:
+        """解析模型返回的 JSON 对象，兼容 markdown 围栏与裸片段。"""
+        if not response:
+            return {}
+        text = response.strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:]
+            text = text.strip()
+        try:
+            data = json.loads(text)
+            return data if isinstance(data, dict) else {}
+        except json.JSONDecodeError:
+            match = re.search(r'\{[\s\S]*\}', response)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                    return data if isinstance(data, dict) else {}
+                except json.JSONDecodeError:
+                    return {}
+            return {}
 
     @staticmethod
     def _parse_vision_response(response: str) -> tuple[str, list[dict]]:

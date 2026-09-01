@@ -155,10 +155,24 @@ FOOD_DATABASE = {
     # 乳制品
     "牛奶": {"calories": 54, "protein": 3.0, "carbs": 3.4, "fat": 3.2, "unit": "100g"},
     "酸奶": {"calories": 72, "protein": 2.5, "carbs": 9.3, "fat": 2.7, "unit": "100g"},
+    "奶酪": {"calories": 328, "protein": 25.7, "carbs": 3.5, "fat": 26.3, "unit": "100g"},
+    "豆浆": {"calories": 31, "protein": 3.0, "carbs": 1.2, "fat": 1.6, "unit": "100g"},
     # 调味
     "生姜": {"calories": 41, "protein": 1.3, "carbs": 7.6, "fat": 0.6, "unit": "100g"},
     "大蒜": {"calories": 149, "protein": 6.4, "carbs": 33.1, "fat": 0.5, "unit": "100g"},
     "葱": {"calories": 27, "protein": 1.6, "carbs": 5.2, "fat": 0.3, "unit": "100g"},
+    "沙拉酱": {"calories": 680, "protein": 1.0, "carbs": 2.6, "fat": 75.0, "unit": "100g"},
+    "番茄酱": {"calories": 100, "protein": 1.2, "carbs": 24.0, "fat": 0.1, "unit": "100g"},
+    "黄油": {"calories": 888, "protein": 0.5, "carbs": 0, "fat": 98.0, "unit": "100g"},
+    "食用油": {"calories": 899, "protein": 0, "carbs": 0, "fat": 99.9, "unit": "100g"},
+    "酱油": {"calories": 60, "protein": 8.0, "carbs": 5.0, "fat": 0.1, "unit": "100g"},
+    "花生酱": {"calories": 594, "protein": 25.0, "carbs": 12.0, "fat": 50.0, "unit": "100g"},
+    "蜂蜜": {"calories": 304, "protein": 0.4, "carbs": 82.0, "fat": 0, "unit": "100g"},
+    # 加工肉 / 快餐
+    "培根": {"calories": 400, "protein": 13.0, "carbs": 1.0, "fat": 42.0, "unit": "100g"},
+    "火腿": {"calories": 145, "protein": 16.0, "carbs": 2.0, "fat": 7.5, "unit": "100g"},
+    "香肠": {"calories": 268, "protein": 12.0, "carbs": 3.0, "fat": 23.0, "unit": "100g"},
+    "薯条": {"calories": 300, "protein": 3.4, "carbs": 41.0, "fat": 15.0, "unit": "100g"},
 }
 
 # 食材别名 → 标准库 key(解决 LLM 返回别名时精确/模糊匹配都失败的问题)
@@ -174,6 +188,12 @@ FOOD_ALIAS = {
     "黄豆芽": "豆芽", "绿豆芽": "豆芽",
     "平菇": "蘑菇", "香菇": "蘑菇", "金针菇": "蘑菇",
     "酸乳": "酸奶",
+    "芝士": "奶酪", "干酪": "奶酪", "起司": "奶酪", "乳酪": "奶酪", "吉士": "奶酪",
+    "蛋黄酱": "沙拉酱", "美乃滋": "沙拉酱", "千岛酱": "沙拉酱",
+    "茄汁": "番茄酱",
+    "烟肉": "培根",
+    "火腿肠": "香肠", "热狗肠": "香肠",
+    "炸薯条": "薯条",
     "橙": "橙子", "柑橘": "橙子",
     "提子": "葡萄",
     "番石榴": "芭乐", "拔子": "芭乐",
