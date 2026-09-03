@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from '../Sidebar/Sidebar'
 import TopBar from '../TopBar/TopBar'
+import OnboardingModal from '../OnboardingModal/OnboardingModal'
+import { profileApi, weightApi } from '../../services/api'
 import './Layout.css'
 
 const pageMeta: Record<string, { title: string; subtitle?: string }> = {
@@ -27,6 +29,37 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsedFromStorage())
   const location = useLocation()
   const meta = pageMeta[location.pathname] || { title: '型刻' }
+  // 新用户/存量用户引导：身高、体重、性别任一缺失时弹窗强制补录。
+  // 每次进入都以服务端资料为准（不依赖本地标记，存量用户缺数据同样弹出）。
+  const [showOnboarding, setShowOnboarding] = useState(false)
+
+  const checkOnboarding = async () => {
+    try {
+      const res = await profileApi.me()
+      const p = res?.profile
+      if (!p || !p.height_cm || !p.weight_kg || !p.gender) {
+        setShowOnboarding(true)
+        return
+      }
+      // 存量兼容：资料有体重但体重记录表为空（早期引导只写资料表），
+      // 自动补一条初始记录，让「当前体重」卡与趋势图有数据
+      try {
+        const hist = await weightApi.history(365, 1)
+        if (!hist?.records?.length && Number(p.weight_kg) > 0) {
+          await weightApi.record({ weight_kg: Number(p.weight_kg), notes: '初始身体数据补录' })
+        }
+      } catch {
+        // 静默，不影响主界面
+      }
+    } catch {
+      // 拉取失败不阻断主界面，下次进入重试
+    }
+  }
+
+  useEffect(() => {
+    checkOnboarding()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const toggleCollapsed = () => {
     setCollapsed((prev) => {
@@ -57,6 +90,11 @@ export default function Layout() {
           </div>
         </main>
       </div>
+      {showOnboarding && (
+        <OnboardingModal
+          onComplete={() => setShowOnboarding(false)}
+        />
+      )}
     </div>
   )
 }

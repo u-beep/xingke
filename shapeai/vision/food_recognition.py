@@ -29,6 +29,7 @@ _CATEGORY_FALLBACK_NUTRITION = {
 "主食": {"calories": 180, "protein": 5.0, "carbs": 35.0, "fat": 2.0},
 "水果": {"calories": 55, "protein": 0.6, "carbs": 13.0, "fat": 0.3},
 "乳制品": {"calories": 130, "protein": 8.0, "carbs": 6.0, "fat": 8.0},
+"熟食": {"calories": 220, "protein": 12.0, "carbs": 20.0, "fat": 10.0},
 "调味": {"calories": 320, "protein": 2.0, "carbs": 15.0, "fat": 28.0},
 "其他": {"calories": 150, "protein": 4.0, "carbs": 18.0, "fat": 6.0},
 }
@@ -128,7 +129,7 @@ class FoodRecognitionService:
 要求：
 1. 仅返回严格 JSON 对象，不要 markdown 代码块、不要解释文字，格式：
 {{"dish":"完整食物或菜品的名称","ingredients":[{{"name":"食材名","category":"分类","quantity_g":整数克数估值,"unit":"g或个或包或ml","confidence":0.0-1.0}}]}}
-2. category 从 [蔬菜, 肉蛋, 主食, 水果, 乳制品, 调味, 其他] 中选择。
+2. category 从 [蔬菜, 肉蛋, 主食, 水果, 乳制品, 熟食, 调味, 其他] 中选择；成品/熟制的完整菜品（如汉堡、三明治、炒菜、卤味等）应归为「熟食」。
 3. 如果照片中没有食物或无法识别，返回 {{"dish":"","ingredients":[]}}。
 
 输出："""

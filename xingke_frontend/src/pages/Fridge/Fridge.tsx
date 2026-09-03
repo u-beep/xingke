@@ -29,7 +29,7 @@ import {
 import { authedImageUrl } from '../../services/authStore'
 import './Fridge.css'
 
-const CATEGORIES = ['蔬菜', '肉蛋', '主食', '水果', '乳制品', '调味', '其他']
+const CATEGORIES = ['蔬菜', '肉蛋', '主食', '水果', '乳制品', '熟食', '调味', '其他']
 
 const UNITS = ['g', '个', '包', 'ml']
 

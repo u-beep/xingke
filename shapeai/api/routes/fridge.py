@@ -56,7 +56,7 @@ def _fuzzy_match_food(name: str, db: dict) -> Optional[dict]:
 class FridgeItemRequest(BaseModel):
     """新增/更新食材请求。"""
     name: str = Field(..., description="食材名称")
-    category: Optional[str] = Field("", description="分类(蔬菜/肉蛋/主食/水果/乳制品/调味/其他)")
+    category: Optional[str] = Field("", description="分类(蔬菜/肉蛋/主食/水果/乳制品/熟食/调味/其他)")
     quantity_g: float = Field(0, description="库存量(克)")
     unit: Optional[str] = Field("g", description="单位(g/个/包/ml)")
     calories: Optional[float] = Field(None, description="每100g热量参考")
@@ -70,7 +70,7 @@ class FridgeItemRequest(BaseModel):
 # 按分类的默认保质期(天),识别结果未返回时使用
 _DEFAULT_SHELF_LIFE: dict[str, float] = {
     "蔬菜": 3, "肉蛋": 2, "主食": 7, "水果": 5,
-    "乳制品": 7, "调味": 30, "其他": 7,
+    "乳制品": 7, "熟食": 2, "调味": 30, "其他": 7,
 }
 
 
@@ -218,6 +218,30 @@ async def photo_recognize(request: FridgePhotoRequest, req: Request):
     recognized = result.get("recognized", [])
     if not recognized or (len(recognized) == 1 and recognized[0].get("name") == "未知"):
         return {"success": False, "message": result.get("error", "未识别到食材"), "recognized": []}
+
+    # 拍到的是完整菜品（如汉堡、三明治、卤味等成品/熟食）时，
+    # 聚合为一条「熟食」整体入库，而不是把面包/肉/蔬菜拆成一堆食材
+    dish = (result.get("dish") or "").strip()
+    if dish:
+        total_g = sum(float(it.get("quantity_g") or 0) for it in recognized)
+        totals = {
+            k: sum(float(it.get(k) or 0) for it in recognized)
+            for k in ("calories", "protein", "carbs", "fat")
+        }
+        recognized = [{
+            "name": dish,
+            "category": "熟食",
+            "quantity_g": round(total_g, 1),
+            "unit": "g",
+            "calories": round(totals["calories"], 1),
+            "protein": round(totals["protein"], 1),
+            "carbs": round(totals["carbs"], 1),
+            "fat": round(totals["fat"], 1),
+            "confidence": min(
+                (float(it.get("confidence") or 0.8) for it in recognized),
+                default=0.8,
+            ),
+        }]
 
     # 2) 上传原始图片到 MinIO
     raw_b64 = request.image_base64.split(",", 1)[-1] if "," in request.image_base64 else request.image_base64

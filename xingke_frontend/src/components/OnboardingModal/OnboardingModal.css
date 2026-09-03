@@ -1,0 +1,199 @@
+/* ============================================
+新用户身体数据引导弹窗 — 必须录入身高/体重/性别
+============================================ */
+
+.onboarding-overlay {
+position: fixed;
+inset: 0;
+background: rgba(26, 46, 42, 0.45);
+backdrop-filter: blur(6px);
+display: flex;
+align-items: center;
+justify-content: center;
+z-index: 2000;
+animation: onboardingFadeIn 0.25s ease;
+}
+
+.onboarding-modal {
+width: 420px;
+max-width: 92vw;
+background: var(--bg-card, #fff);
+border-radius: 20px;
+box-shadow: 0 16px 48px rgba(43, 36, 16, 0.18);
+padding: 32px 32px 28px;
+}
+
+/* —— 品牌区 —— */
+.onboarding-brand {
+text-align: center;
+margin-bottom: 24px;
+}
+
+.onboarding-brand__logo {
+width: 40px;
+height: 40px;
+object-fit: contain;
+margin-bottom: 6px;
+}
+
+.onboarding-brand__title {
+font-size: 21px;
+font-weight: 800;
+color: var(--text-primary, #222);
+margin: 0;
+}
+
+.onboarding-brand__subtitle {
+margin: 8px 0 0;
+font-size: 12.5px;
+line-height: 1.6;
+color: var(--text-secondary, #666);
+}
+
+/* —— 身高/体重并排 —— */
+.onboarding-grid {
+display: grid;
+grid-template-columns: 1fr 1fr;
+gap: 14px;
+margin-bottom: 16px;
+}
+
+.onboarding-field {
+display: flex;
+flex-direction: column;
+gap: 6px;
+}
+
+.onboarding-field__label {
+display: inline-flex;
+align-items: center;
+gap: 4px;
+font-size: 13px;
+font-weight: 600;
+color: var(--text-primary, #333);
+}
+
+.onboarding-field__input-wrap {
+position: relative;
+display: flex;
+align-items: center;
+}
+
+.onboarding-field__input {
+width: 100%;
+padding: 11px 42px 11px 14px;
+border: 1.5px solid var(--border-light, #e5e5e5);
+border-radius: 12px;
+font-size: 16px;
+color: var(--text-primary, #222);
+background: var(--bg-page, #fafafa);
+outline: none;
+transition: border-color 0.15s, box-shadow 0.15s;
+-moz-appearance: textfield;
+}
+
+.onboarding-field__input::-webkit-outer-spin-button,
+.onboarding-field__input::-webkit-inner-spin-button {
+-webkit-appearance: none;
+margin: 0;
+}
+
+.onboarding-field__input:focus {
+border-color: #ffce00;
+box-shadow: 0 0 0 3px rgba(255, 206, 0, 0.18);
+background: #fff;
+}
+
+.onboarding-field__unit {
+position: absolute;
+right: 14px;
+font-size: 13px;
+font-weight: 600;
+color: var(--text-tertiary, #999);
+pointer-events: none;
+}
+
+/* —— 性别选择 —— */
+.onboarding-gender {
+display: grid;
+grid-template-columns: 1fr 1fr;
+gap: 10px;
+}
+
+.onboarding-gender__btn {
+padding: 11px;
+border: 1.5px solid var(--border-light, #e5e5e5);
+border-radius: 12px;
+background: var(--bg-page, #fafafa);
+font-size: 15px;
+font-weight: 600;
+color: var(--text-secondary, #555);
+cursor: pointer;
+transition: all 0.15s;
+}
+
+.onboarding-gender__btn:hover {
+border-color: #ffce00;
+}
+
+.onboarding-gender__btn--active {
+border-color: #ffb800;
+background: #fff8dd;
+color: #8a6d00;
+}
+
+/* —— 错误提示 —— */
+.onboarding-error {
+margin-top: 14px;
+padding: 9px 12px;
+background: #fdeeee;
+border: 1px solid #f5c6c6;
+border-radius: 10px;
+font-size: 12.5px;
+color: #c0392b;
+}
+
+/* —— 提交按钮 —— */
+.onboarding-submit {
+width: 100%;
+margin-top: 20px;
+padding: 13px;
+border: none;
+border-radius: 12px;
+background: linear-gradient(135deg, #ffd100, #ffab00);
+font-size: 15.5px;
+font-weight: 700;
+color: #4a3a00;
+cursor: pointer;
+transition: transform 0.12s, box-shadow 0.15s, opacity 0.15s;
+box-shadow: 0 6px 16px rgba(255, 180, 0, 0.35);
+}
+
+.onboarding-submit:hover:not(:disabled) {
+transform: translateY(-1px);
+box-shadow: 0 8px 20px rgba(255, 180, 0, 0.45);
+}
+
+.onboarding-submit:disabled {
+opacity: 0.65;
+cursor: not-allowed;
+}
+
+@keyframes onboardingFadeIn {
+from {
+opacity: 0;
+}
+to {
+opacity: 1;
+}
+}
+
+@media (max-width: 420px) {
+.onboarding-modal {
+padding: 24px 20px 22px;
+}
+
+.onboarding-grid {
+grid-template-columns: 1fr;
+}
+}
